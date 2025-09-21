@@ -61,6 +61,9 @@ def process_hioki_csv(uploaded_file, header_keyword: str = 'Date') -> Optional[T
     data_df['Datetime'] = pd.to_datetime(data_df['Date'] + ' ' + data_df['Etime'], errors='coerce')
     data_df = data_df.dropna(subset=['Datetime'])
 
+    # --- FIX: Sort the DataFrame by Datetime to ensure correct calculations ---
+    data_df = data_df.sort_values(by='Datetime').reset_index(drop=True)
+
     numeric_cols = data_df.columns.drop(['Date', 'Etime', 'Status', 'Datetime'], errors='ignore')
     for col in numeric_cols:
         data_df[col] = pd.to_numeric(data_df[col], errors='coerce')
@@ -98,7 +101,7 @@ else:
         # --- Main Dashboard ---
         st.header("Analysis Overview")
 
-        # --- UPDATED: Key Metrics Display ---
+        # Key Metrics Display
         duration = data['Datetime'].max() - data['Datetime'].min()
         days = duration.days
         hours, remainder = divmod(duration.seconds, 3600)
@@ -106,8 +109,9 @@ else:
         duration_str = f"{days}d {hours}h {minutes}m"
 
         total_consumed_kwh = 0
-        if 'Consumed Real Energy (Wh)' in data.columns and not data['Consumed Real Energy (Wh)'].dropna().empty:
-            total_consumed_kwh = (data['Consumed Real Energy (Wh)'].dropna().iloc[-1] - data['Consumed Real Energy (Wh)'].dropna().iloc[0]) / 1000
+        energy_data = data['Consumed Real Energy (Wh)'].dropna()
+        if not energy_data.empty:
+            total_consumed_kwh = (energy_data.iloc[-1] - energy_data.iloc[0]) / 1000
 
         avg_power_kw = 0
         if 'Average Real Power (kW)' in data.columns:
@@ -120,8 +124,9 @@ else:
                 max_demand_kw = demand_series.max()
         
         avg_pf = 0
-        if 'Average Power Factor' in data.columns and not data['Average Power Factor'].dropna().empty:
-            avg_pf = data['Average Power Factor'][data['Average Power Factor'] > 0].mean()
+        pf_data = data['Average Power Factor'].dropna()
+        if not pf_data.empty:
+            avg_pf = pf_data[pf_data > 0].mean()
 
         col1, col2, col3, col4, col5 = st.columns(5)
         col1.metric("Measurement Duration", duration_str)
@@ -171,19 +176,16 @@ else:
                 peak_index = demand_data.idxmax()
                 peak_demand_time = data.loc[peak_index, 'Datetime']
                 
-                # FIX: Draw the line and annotation in two separate steps to avoid the type error.
-                # 1. Draw the vertical line without an annotation.
                 fig_demand.add_vline(x=peak_demand_time, line_dash="dash", line_color="red")
                 
-                # 2. Add a separate, manually positioned annotation.
                 fig_demand.add_annotation(
                     x=peak_demand_time,
                     y=max_demand_kw,
                     text=f"Peak Demand: {max_demand_kw:.2f} kW",
                     showarrow=True,
                     arrowhead=1,
-                    yshift=10, # Shift the text slightly above the point
-                    bgcolor="rgba(255, 255, 255, 0.8)" # Add a light background for readability
+                    yshift=10,
+                    bgcolor="rgba(255, 255, 255, 0.8)"
                 )
             
             st.plotly_chart(fig_demand, use_container_width=True)
