@@ -88,14 +88,14 @@ def process_hioki_csv(uploaded_file, header_keyword: str = 'Date') -> Optional[T
     return params_df, data_df
 
 # --- Gemini AI Analysis Function ---
-async def get_gemini_analysis(summary_metrics, data_stats, params_info, power_chart_b64, pf_chart_b64, demand_chart_b64):
+async def get_gemini_analysis(summary_metrics, data_stats, params_info):
     """
-    Sends data and chart SVG images to Gemini API for analysis.
+    Sends data to Gemini API for analysis and returns the response.
     """
-    system_prompt = """You are an expert industrial energy efficiency analyst and process engineer for FMF Foods Ltd., a food manufacturing company in Fiji. Your task is to analyze the provided power consumption data, statistics, and trend graphs from an industrial machine. Provide a concise, actionable report in Markdown format. The report should have three sections: 1. Executive Summary, 2. Key Observations & Pattern Analysis (referencing the graphs), and 3. Actionable Recommendations for Cost Reduction. Be specific and base your analysis strictly on the data and images provided. Address the user as a process optimization engineer."""
+    system_prompt = """You are an expert industrial energy efficiency analyst and process engineer for FMF Foods Ltd., a food manufacturing company in Fiji. Your task is to analyze the provided power consumption data, statistics, and trend graphs from an industrial machine. Provide a concise, actionable report in Markdown format. The report should have three sections: 1. Executive Summary, 2. Key Observations & Pattern Analysis, and 3. Actionable Recommendations for Cost Reduction. Be specific and base your analysis strictly on the data provided. Address the user as a process optimization engineer."""
 
     user_prompt = f"""
-    Please analyze the following power consumption data for an industrial machine at our facility. In addition to the summary data, please analyze the three provided trend graphs to identify patterns, cycles, anomalies, and opportunities for improvement.
+    Please analyze the following power consumption data for an industrial machine at our facility.
 
     **Key Performance Indicators (KPIs):**
     {summary_metrics}
@@ -117,14 +117,7 @@ async def get_gemini_analysis(summary_metrics, data_stats, params_info, power_ch
     api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key={api_key}"
     
     payload = {
-        "contents": [{
-            "parts": [
-                {"text": user_prompt},
-                {"inline_data": {"mime_type": "image/svg+xml", "data": power_chart_b64}},
-                {"inline_data": {"mime_type": "image/svg+xml", "data": pf_chart_b64}},
-                {"inline_data": {"mime_type": "image/svg+xml", "data": demand_chart_b64}}
-            ]
-        }],
+        "contents": [{"parts": [{"text": user_prompt}]}],
         "systemInstruction": {"parts": [{"text": system_prompt}]}
     }
 
@@ -201,10 +194,39 @@ else:
         
         st.markdown("---")
         
+        # --- AI Analysis Section ---
+        st.sidebar.markdown("---")
+        if st.sidebar.button("🤖 Get AI Analysis", help="Click to get an AI-powered analysis of this data."):
+            with st.spinner("🧠 AI is analyzing the data... This may take a moment."):
+                # Prepare text data
+                summary_metrics_text = f"""- Measurement Duration: {duration_str}
+                - Total Consumed Energy: {total_consumed_kwh:.2f} kWh
+                - Average Power: {avg_power_kw:.2f} kW
+                - Peak Demand: {max_demand_kw:.2f} kW
+                - Average Power Factor: {avg_pf:.3f}"""
+                stats_cols = ['Average Real Power (kW)', 'Average Apparent Power (kVA)', 'Average Reactive Power (kVAR)', 'Average Power Factor', 'Average Current (A)', 'Total Power Demand (kW)']
+                existing_stats_cols = [col for col in stats_cols if col in data.columns]
+                data_stats_text = data[existing_stats_cols].describe().to_string()
+                params_info_text = parameters.to_string()
+
+                # Call the async function
+                import asyncio
+                ai_response = asyncio.run(get_gemini_analysis(
+                    summary_metrics_text, data_stats_text, params_info_text
+                ))
+                
+                st.session_state['ai_analysis'] = ai_response
+
+        if 'ai_analysis' in st.session_state:
+            st.header("🤖 AI-Powered Analysis")
+            st.markdown(st.session_state['ai_analysis'])
+
+
+        st.markdown("---")
+
         tab_list = ["⚡ Power & Current", "⚖️ Power Factor Analysis", "📈 Demand Analysis", "📋 Raw Data", "📝 Summary Parameters", "📖 Variable Explanations"]
         tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(tab_list)
 
-        # Generate figures once to use in tabs and for AI analysis
         with tab1:
             st.subheader("Power Consumption Over Time")
             fig_power = px.line(data, x='Datetime', y=['Average Real Power (kW)', 'Average Apparent Power (kVA)', 'Average Reactive Power (kVAR)'],
@@ -233,44 +255,6 @@ else:
                 fig_demand.add_annotation(x=peak_demand_time, y=max_demand_kw, text=f"Peak Demand: {max_demand_kw:.2f} kW",
                                           showarrow=True, arrowhead=1, yshift=10, bgcolor="rgba(255, 255, 255, 0.8)")
             st.plotly_chart(fig_demand, use_container_width=True)
-
-        # --- AI Analysis Section ---
-        st.sidebar.markdown("---")
-        if st.sidebar.button("🤖 Get AI Analysis", help="Click to get an AI-powered analysis of this data."):
-            with st.spinner("🧠 AI is analyzing the data and graphs... This may take a moment."):
-                # Prepare text data
-                summary_metrics_text = f"""- Measurement Duration: {duration_str}
-                - Total Consumed Energy: {total_consumed_kwh:.2f} kWh
-                - Average Power: {avg_power_kw:.2f} kW
-                - Peak Demand: {max_demand_kw:.2f} kW
-                - Average Power Factor: {avg_pf:.3f}"""
-                stats_cols = ['Average Real Power (kW)', 'Average Apparent Power (kVA)', 'Average Reactive Power (kVAR)', 'Average Power Factor', 'Average Current (A)', 'Total Power Demand (kW)']
-                existing_stats_cols = [col for col in stats_cols if col in data.columns]
-                data_stats_text = data[existing_stats_cols].describe().to_string()
-                params_info_text = parameters.to_string()
-
-                # Prepare image data as SVG
-                power_img_bytes = fig_power.to_image(format="svg")
-                pf_img_bytes = fig_pf.to_image(format="svg")
-                demand_img_bytes = fig_demand.to_image(format="svg")
-
-                power_chart_b64 = base64.b64encode(power_img_bytes).decode()
-                pf_chart_b64 = base64.b64encode(pf_img_bytes).decode()
-                demand_chart_b64 = base64.b64encode(demand_img_bytes).decode()
-
-                # Call the async function
-                import asyncio
-                ai_response = asyncio.run(get_gemini_analysis(
-                    summary_metrics_text, data_stats_text, params_info_text,
-                    power_chart_b64, pf_chart_b64, demand_chart_b64
-                ))
-                
-                st.session_state['ai_analysis'] = ai_response
-
-        if 'ai_analysis' in st.session_state:
-            st.header("🤖 AI-Powered Analysis")
-            st.markdown(st.session_state['ai_analysis'])
-
 
         with tab4:
             st.subheader("Cleaned Raw Data Table")
