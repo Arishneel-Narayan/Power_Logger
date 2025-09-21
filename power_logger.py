@@ -61,7 +61,6 @@ def process_hioki_csv(uploaded_file, header_keyword: str = 'Date') -> Optional[T
     data_df['Datetime'] = pd.to_datetime(data_df['Date'] + ' ' + data_df['Etime'], errors='coerce')
     data_df = data_df.dropna(subset=['Datetime'])
 
-    # --- FIX: Sort the DataFrame by Datetime to ensure correct calculations ---
     data_df = data_df.sort_values(by='Datetime').reset_index(drop=True)
 
     numeric_cols = data_df.columns.drop(['Date', 'Etime', 'Status', 'Datetime'], errors='ignore')
@@ -70,8 +69,17 @@ def process_hioki_csv(uploaded_file, header_keyword: str = 'Date') -> Optional[T
         
     data_df = rename_power_columns(data_df)
     
-    # Convert W to kW and Wh to kWh for easier analysis
-    for col in ['Average Real Power (W)', 'Average Apparent Power (VA)', 'Average Reactive Power (VAR)', 'Power Demand Consumed (W)']:
+    # --- FIX: Handle reversed wiring for Power Factor and Demand ---
+    # Power factor is a ratio and should always be positive.
+    if 'Average Power Factor' in data_df.columns:
+        data_df['Average Power Factor'] = data_df['Average Power Factor'].abs()
+
+    # Create a robust total demand column
+    pdem_plus = data_df['Power Demand Consumed (W)'].fillna(0)
+    pdem_minus = data_df['Power Demand Exported (W)'].fillna(0)
+    data_df['Total Power Demand (kW)'] = (pdem_plus.abs() + pdem_minus.abs()) / 1000
+
+    for col in ['Average Real Power (W)', 'Average Apparent Power (VA)', 'Average Reactive Power (VAR)']:
         if col in data_df.columns:
             new_col_name = col.replace('(W)', '(kW)').replace('(VA)', '(kVA)').replace('(VAR)', '(kVAR)')
             data_df[new_col_name] = data_df[col] / 1000
@@ -98,118 +106,101 @@ else:
     if parameters is not None and data is not None and not data.empty:
         st.sidebar.success("File processed successfully!")
         
-        # --- Main Dashboard ---
         st.header("Analysis Overview")
 
-        # Key Metrics Display
+        # Robust Energy Calculation
+        delta_plus_wh = 0
+        energy_plus_data = data['Consumed Real Energy (Wh)'].dropna()
+        if len(energy_plus_data) > 1:
+            delta_plus_wh = energy_plus_data.iloc[-1] - energy_plus_data.iloc[0]
+
+        delta_minus_wh = 0
+        energy_minus_data = data['Exported Real Energy (Wh)'].dropna()
+        if len(energy_minus_data) > 1:
+            delta_minus_wh = energy_minus_data.iloc[-1] - energy_minus_data.iloc[0]
+
+        total_consumed_kwh = (abs(delta_plus_wh) + abs(delta_minus_wh)) / 1000
+
+        # Wiring Check and Warning
+        if total_consumed_kwh > 0 and (abs(delta_minus_wh) / (abs(delta_plus_wh) + abs(delta_minus_wh))) > 0.1:
+            st.warning("""
+            **⚠️ Potential Wiring Issue Detected** A significant amount of energy was recorded in the 'Exported' channel. This typically happens when a Current Transformer (CT) clamp is installed backward.
+            
+            **Impact:**
+            - The **Total Consumed Energy** metric is calculated correctly by summing both channels.
+            - **Average Real Power** and **Power Factor** may appear as negative values in plots and tables.
+            
+            Please verify the physical setup for future measurements.
+            """, icon="⚠️")
+
         duration = data['Datetime'].max() - data['Datetime'].min()
-        days = duration.days
-        hours, remainder = divmod(duration.seconds, 3600)
-        minutes, _ = divmod(remainder, 60)
+        days, hours, rem = duration.days, duration.seconds // 3600, duration.seconds % 3600
+        minutes = rem // 60
         duration_str = f"{days}d {hours}h {minutes}m"
 
-        total_consumed_kwh = 0
-        energy_data = data['Consumed Real Energy (Wh)'].dropna()
-        if not energy_data.empty:
-            total_consumed_kwh = (energy_data.iloc[-1] - energy_data.iloc[0]) / 1000
-
-        avg_power_kw = 0
-        if 'Average Real Power (kW)' in data.columns:
-            avg_power_kw = data['Average Real Power (kW)'].mean()
-
-        max_demand_kw = 0
-        if 'Power Demand Consumed (kW)' in data.columns:
-            demand_series = data['Power Demand Consumed (kW)'].dropna()
-            if not demand_series.empty:
-                max_demand_kw = demand_series.max()
-        
-        avg_pf = 0
-        pf_data = data['Average Power Factor'].dropna()
-        if not pf_data.empty:
-            avg_pf = pf_data[pf_data > 0].mean()
+        avg_power_kw = data['Average Real Power (kW)'].abs().mean()
+        max_demand_kw = data['Total Power Demand (kW)'].max()
+        avg_pf = data['Average Power Factor'].mean()
 
         col1, col2, col3, col4, col5 = st.columns(5)
         col1.metric("Measurement Duration", duration_str)
         col2.metric("Total Consumed Energy", f"{total_consumed_kwh:.2f} kWh")
         col3.metric("Average Power", f"{avg_power_kw:.2f} kW")
         col4.metric("Peak Demand", f"{max_demand_kw:.2f} kW")
-        col5.metric("Average Power Factor", f"{avg_pf:.3f}", delta=f"{avg_pf - 0.95:.3f}", delta_color="inverse" if avg_pf > 0 else "off", help="Target is > 0.95. A negative delta is bad.")
+        col5.metric("Average Power Factor", f"{avg_pf:.3f}", delta=f"{avg_pf - 0.95:.3f}", delta_color="inverse", help="Target is > 0.95. A negative delta is bad.")
         
         st.markdown("---")
 
-        # Tabs for different analyses
         tab_list = ["⚡ Power & Current", "⚖️ Power Factor Analysis", "📈 Demand Analysis", "📋 Raw Data", "📝 Summary Parameters", "📖 Variable Explanations"]
         tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(tab_list)
 
         with tab1:
             st.subheader("Power Consumption Over Time")
+            st.info("Note: A negative 'Average Real Power' value indicates a likely reversed CT clamp. The charts show the raw data.", icon="ℹ️")
             fig_power = px.line(data, x='Datetime', y=['Average Real Power (kW)', 'Average Apparent Power (kVA)', 'Average Reactive Power (kVAR)'],
                                 title="Real, Apparent, and Reactive Power", labels={"value": "Power", "variable": "Power Type"})
             fig_power.update_layout(yaxis_title="Power (kVA, kW, kVAR)", hovermode="x unified")
             st.plotly_chart(fig_power, use_container_width=True)
 
-            st.subheader("Current Draw Over Time")
-            fig_current = px.line(data, x='Datetime', y='Average Current (A)', title="Current Draw")
-            st.plotly_chart(fig_current, use_container_width=True)
-
         with tab2:
             st.subheader("Power Factor Analysis")
-            st.markdown("""
-            **Power Factor (PF)** is a measure of electrical efficiency. A value of 1.0 is perfect, while a value below 0.95 is often penalized by utilities.
-            Low PF is caused by inductive loads (like motors), which require 'Reactive Power' to operate. This strains the grid without doing useful work.
-            **The Goal:** Keep the Power Factor consistently above 0.95 to avoid penalties and improve system efficiency.
-            """)
-            fig_pf = px.line(data, x='Datetime', y='Average Power Factor', title="Power Factor Over Time")
+            st.markdown("This chart shows the corrected, absolute Power Factor. A value of 1.0 is perfect, while below 0.95 is inefficient.")
+            fig_pf = px.line(data, x='Datetime', y='Average Power Factor', title="Corrected Power Factor Over Time")
             fig_pf.add_hline(y=0.95, line_dash="dash", line_color="red", annotation_text="Target PF (0.95)")
             st.plotly_chart(fig_pf, use_container_width=True)
 
         with tab3:
             st.subheader("Peak Demand Analysis")
-            st.markdown("""
-            **Power Demand** is the average power consumed over a short period (e.g., 15 or 30 minutes). Utility companies often apply a 'Demand Charge' based on the single highest peak in a billing cycle.
-            **The Goal:** Reduce your peak demand by staggering start-ups of large machinery or shifting loads to off-peak times. This can significantly lower electricity bills.
-            """)
-            fig_demand = px.line(data, x='Datetime', y='Power Demand Consumed (kW)', title="Power Demand Profile")
+            st.markdown("This chart shows the total power demand, corrected for potential wiring issues. The peak of this graph determines utility demand charges.")
+            fig_demand = px.line(data, x='Datetime', y='Total Power Demand (kW)', title="Total Power Demand Profile")
             
-            demand_data = data['Power Demand Consumed (kW)'].dropna()
+            demand_data = data['Total Power Demand (kW)'].dropna()
             if not demand_data.empty:
                 peak_index = demand_data.idxmax()
                 peak_demand_time = data.loc[peak_index, 'Datetime']
                 
                 fig_demand.add_vline(x=peak_demand_time, line_dash="dash", line_color="red")
-                
-                fig_demand.add_annotation(
-                    x=peak_demand_time,
-                    y=max_demand_kw,
-                    text=f"Peak Demand: {max_demand_kw:.2f} kW",
-                    showarrow=True,
-                    arrowhead=1,
-                    yshift=10,
-                    bgcolor="rgba(255, 255, 255, 0.8)"
-                )
-            
+                fig_demand.add_annotation(x=peak_demand_time, y=max_demand_kw, text=f"Peak Demand: {max_demand_kw:.2f} kW",
+                                          showarrow=True, arrowhead=1, yshift=10, bgcolor="rgba(255, 255, 255, 0.8)")
             st.plotly_chart(fig_demand, use_container_width=True)
 
         with tab4:
             st.subheader("Cleaned Raw Data Table")
-            st.markdown("This table contains the full time-series data with human-readable column names, which can be sorted and searched.")
             st.dataframe(data)
 
         with tab5:
             st.subheader("Measurement Summary Parameters")
-            st.markdown("This table shows the cumulative data and settings for the entire measurement period.")
             st.dataframe(parameters)
 
         with tab6:
             st.subheader("Variable Explanations")
             st.markdown("""
-            - **Average Real Power (kW):** The 'useful' power performing work. This is what you want to use.
+            - **Average Real Power (kW):** The 'useful' power performing work. *If this value is negative, it likely indicates a reversed CT clamp.*
             - **Average Apparent Power (kVA):** The total power supplied by the utility (Real + Reactive).
-            - **Average Reactive Power (kVAR):** The 'wasted' power required for motors. High values indicate inefficiency.
-            - **Average Power Factor:** The ratio of Real to Apparent Power. A direct score of your electrical efficiency.
-            - **Consumed Real Energy (kWh):** The total energy you are billed for over time (calculated from the Wh column).
-            - **Power Demand Consumed (kW):** The basis for peak demand charges on your utility bill.
-            - **Average Current (A):** High current can indicate mechanical stress or overload.
+            - **Average Reactive Power (kVAR):** The 'wasted' power required for motors.
+            - **Average Power Factor:** The ratio of Real to Apparent Power. A direct score of your electrical efficiency, corrected to always be positive.
+            - **Consumed Real Energy (kWh):** The total energy you are billed for, corrected for wiring issues.
+            - **Total Power Demand (kW):** The basis for peak demand charges, corrected for wiring issues.
             """)
     elif uploaded_file is not None:
          st.warning("Could not process the uploaded file. Please ensure it is a valid, non-empty Hioki CSV export.")
