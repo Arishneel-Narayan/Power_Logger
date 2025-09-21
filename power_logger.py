@@ -165,8 +165,18 @@ else:
             
             demand_data = data['Power Demand Consumed (kW)'].dropna()
             if not demand_data.empty:
-                peak_demand_time = data.loc[demand_data.idxmax()]['Datetime']
-                fig_demand.add_vline(x=peak_demand_time, line_dash="dash", line_color="red", annotation_text=f"Peak Demand ({max_demand_kw:.2f} kW)")
+                # Find the index of the max value
+                peak_index = demand_data.idxmax()
+                
+                # Get the timestamp and convert it to a standard Python datetime object to prevent type errors
+                peak_demand_time = data.loc[peak_index, 'Datetime'].to_pydatetime()
+                
+                fig_demand.add_vline(
+                    x=peak_demand_time, 
+                    line_dash="dash", 
+                    line_color="red", 
+                    annotation_text=f"Peak Demand ({max_demand_kw:.2f} kW)"
+                )
             
             st.plotly_chart(fig_demand, use_container_width=True)
 
