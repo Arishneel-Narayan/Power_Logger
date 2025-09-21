@@ -115,7 +115,9 @@ else:
 
         max_demand_kw = 0
         if 'Power Demand Consumed (kW)' in data.columns:
-            max_demand_kw = data['Power Demand Consumed (kW)'].max()
+            demand_series = data['Power Demand Consumed (kW)'].dropna()
+            if not demand_series.empty:
+                max_demand_kw = demand_series.max()
         
         avg_pf = 0
         if 'Average Power Factor' in data.columns and not data['Average Power Factor'].dropna().empty:
@@ -131,7 +133,8 @@ else:
         st.markdown("---")
 
         # Tabs for different analyses
-        tab1, tab2, tab3, tab4, tab5 = st.tabs(["⚡ Power & Current", "⚖️ Power Factor Analysis", "📈 Demand Analysis", "📋 Summary Parameters", "📖 Variable Explanations"])
+        tab_list = ["⚡ Power & Current", "⚖️ Power Factor Analysis", "📈 Demand Analysis", "📋 Raw Data", "📝 Summary Parameters", "📖 Variable Explanations"]
+        tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(tab_list)
 
         with tab1:
             st.subheader("Power Consumption Over Time")
@@ -165,27 +168,37 @@ else:
             
             demand_data = data['Power Demand Consumed (kW)'].dropna()
             if not demand_data.empty:
-                # Find the index of the max value
                 peak_index = demand_data.idxmax()
+                peak_demand_time = data.loc[peak_index, 'Datetime']
                 
-                # Get the timestamp and convert it to a standard Python datetime object to prevent type errors
-                peak_demand_time = data.loc[peak_index, 'Datetime'].to_pydatetime()
+                # FIX: Draw the line and annotation in two separate steps to avoid the type error.
+                # 1. Draw the vertical line without an annotation.
+                fig_demand.add_vline(x=peak_demand_time, line_dash="dash", line_color="red")
                 
-                fig_demand.add_vline(
-                    x=peak_demand_time, 
-                    line_dash="dash", 
-                    line_color="red", 
-                    annotation_text=f"Peak Demand ({max_demand_kw:.2f} kW)"
+                # 2. Add a separate, manually positioned annotation.
+                fig_demand.add_annotation(
+                    x=peak_demand_time,
+                    y=max_demand_kw,
+                    text=f"Peak Demand: {max_demand_kw:.2f} kW",
+                    showarrow=True,
+                    arrowhead=1,
+                    yshift=10, # Shift the text slightly above the point
+                    bgcolor="rgba(255, 255, 255, 0.8)" # Add a light background for readability
                 )
             
             st.plotly_chart(fig_demand, use_container_width=True)
 
         with tab4:
+            st.subheader("Cleaned Raw Data Table")
+            st.markdown("This table contains the full time-series data with human-readable column names, which can be sorted and searched.")
+            st.dataframe(data)
+
+        with tab5:
             st.subheader("Measurement Summary Parameters")
             st.markdown("This table shows the cumulative data and settings for the entire measurement period.")
             st.dataframe(parameters)
 
-        with tab5:
+        with tab6:
             st.subheader("Variable Explanations")
             st.markdown("""
             - **Average Real Power (kW):** The 'useful' power performing work. This is what you want to use.
