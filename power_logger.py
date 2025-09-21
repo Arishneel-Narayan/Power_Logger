@@ -69,12 +69,10 @@ def process_hioki_csv(uploaded_file, header_keyword: str = 'Date') -> Optional[T
         
     data_df = rename_power_columns(data_df)
     
-    # --- FIX: Handle reversed wiring for Power Factor and Demand ---
-    # Power factor is a ratio and should always be positive.
+    # Handle reversed wiring for Power Factor and Demand
     if 'Average Power Factor' in data_df.columns:
         data_df['Average Power Factor'] = data_df['Average Power Factor'].abs()
 
-    # Create a robust total demand column
     pdem_plus = data_df['Power Demand Consumed (W)'].fillna(0)
     pdem_minus = data_df['Power Demand Exported (W)'].fillna(0)
     data_df['Total Power Demand (kW)'] = (pdem_plus.abs() + pdem_minus.abs()) / 1000
@@ -121,18 +119,6 @@ else:
 
         total_consumed_kwh = (abs(delta_plus_wh) + abs(delta_minus_wh)) / 1000
 
-        # Wiring Check and Warning
-        if total_consumed_kwh > 0 and (abs(delta_minus_wh) / (abs(delta_plus_wh) + abs(delta_minus_wh))) > 0.1:
-            st.warning("""
-            **⚠️ Potential Wiring Issue Detected** A significant amount of energy was recorded in the 'Exported' channel. This typically happens when a Current Transformer (CT) clamp is installed backward.
-            
-            **Impact:**
-            - The **Total Consumed Energy** metric is calculated correctly by summing both channels.
-            - **Average Real Power** and **Power Factor** may appear as negative values in plots and tables.
-            
-            Please verify the physical setup for future measurements.
-            """, icon="⚠️")
-
         duration = data['Datetime'].max() - data['Datetime'].min()
         days, hours, rem = duration.days, duration.seconds // 3600, duration.seconds % 3600
         minutes = rem // 60
@@ -156,7 +142,6 @@ else:
 
         with tab1:
             st.subheader("Power Consumption Over Time")
-            st.info("Note: A negative 'Average Real Power' value indicates a likely reversed CT clamp. The charts show the raw data.", icon="ℹ️")
             fig_power = px.line(data, x='Datetime', y=['Average Real Power (kW)', 'Average Apparent Power (kVA)', 'Average Reactive Power (kVAR)'],
                                 title="Real, Apparent, and Reactive Power", labels={"value": "Power", "variable": "Power Type"})
             fig_power.update_layout(yaxis_title="Power (kVA, kW, kVAR)", hovermode="x unified")
@@ -195,7 +180,7 @@ else:
         with tab6:
             st.subheader("Variable Explanations")
             st.markdown("""
-            - **Average Real Power (kW):** The 'useful' power performing work. *If this value is negative, it likely indicates a reversed CT clamp.*
+            - **Average Real Power (kW):** The 'useful' power performing work.
             - **Average Apparent Power (kVA):** The total power supplied by the utility (Real + Reactive).
             - **Average Reactive Power (kVAR):** The 'wasted' power required for motors.
             - **Average Power Factor:** The ratio of Real to Apparent Power. A direct score of your electrical efficiency, corrected to always be positive.
