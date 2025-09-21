@@ -3,8 +3,7 @@ import pandas as pd
 import plotly.express as px
 from typing import Tuple, Optional
 import json
-import base64
-import io
+import requests # Use the requests library for server-side API calls
 
 # --- Data Processing Functions ---
 
@@ -88,9 +87,10 @@ def process_hioki_csv(uploaded_file, header_keyword: str = 'Date') -> Optional[T
     return params_df, data_df
 
 # --- Gemini AI Analysis Function ---
-async def get_gemini_analysis(summary_metrics, data_stats, params_info):
+def get_gemini_analysis(summary_metrics, data_stats, params_info):
     """
     Sends data to Gemini API for analysis and returns the response.
+    Uses the 'requests' library for server-side execution.
     """
     system_prompt = """You are an expert industrial energy efficiency analyst and process engineer for FMF Foods Ltd., a food manufacturing company in Fiji. Your task is to analyze the provided power consumption data, statistics, and trend graphs from an industrial machine. Provide a concise, actionable report in Markdown format. The report should have three sections: 1. Executive Summary, 2. Key Observations & Pattern Analysis, and 3. Actionable Recommendations for Cost Reduction. Be specific and base your analysis strictly on the data provided. Address the user as a process optimization engineer."""
 
@@ -122,13 +122,9 @@ async def get_gemini_analysis(summary_metrics, data_stats, params_info):
     }
 
     try:
-        from js import fetch
-        response = await fetch(api_url, 
-            method='POST',
-            headers={'Content-Type': 'application/json'},
-            body=json.dumps(payload)
-        )
-        result = await response.json()
+        response = requests.post(api_url, json=payload)
+        response.raise_for_status()  # Raise an exception for bad status codes (4xx or 5xx)
+        result = response.json()
         
         if 'error' in result:
             return f"Error from Gemini API: {result['error']['message']}"
@@ -137,8 +133,10 @@ async def get_gemini_analysis(summary_metrics, data_stats, params_info):
         content = candidate.get('content', {}).get('parts', [{}])[0]
         return content.get('text', "Error: Could not extract analysis from the API response.")
 
-    except Exception as e:
+    except requests.exceptions.RequestException as e:
         return f"An error occurred while contacting the AI Analysis service: {e}"
+    except Exception as e:
+        return f"An unexpected error occurred: {e}"
 
 
 # --- Streamlit App Layout ---
@@ -194,7 +192,7 @@ else:
         
         st.markdown("---")
         
-        # --- AI Analysis Section ---
+        # --- AI Analysis Button ---
         st.sidebar.markdown("---")
         if st.sidebar.button("🤖 Get AI Analysis", help="Click to get an AI-powered analysis of this data."):
             with st.spinner("🧠 AI is analyzing the data... This may take a moment."):
@@ -209,21 +207,14 @@ else:
                 data_stats_text = data[existing_stats_cols].describe().to_string()
                 params_info_text = parameters.to_string()
 
-                # Call the async function
-                import asyncio
-                ai_response = asyncio.run(get_gemini_analysis(
+                # Call the synchronous function
+                ai_response = get_gemini_analysis(
                     summary_metrics_text, data_stats_text, params_info_text
-                ))
+                )
                 
                 st.session_state['ai_analysis'] = ai_response
 
-        if 'ai_analysis' in st.session_state:
-            st.header("🤖 AI-Powered Analysis")
-            st.markdown(st.session_state['ai_analysis'])
-
-
-        st.markdown("---")
-
+        # --- Visualization Tabs ---
         tab_list = ["⚡ Power & Current", "⚖️ Power Factor Analysis", "📈 Demand Analysis", "📋 Raw Data", "📝 Summary Parameters", "📖 Variable Explanations"]
         tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(tab_list)
 
@@ -280,6 +271,13 @@ else:
 | **U1_Avg[V]** | Average Voltage | The electrical potential supplied. Should be stable. | **Diagnose Supply Issues:** Significant voltage drops or instability can harm equipment and affect performance. This helps identify grid supply problems. |
 | **Freq_Avg[Hz]** | Average Frequency | The speed of the AC supply from the grid. Should be very stable (e.g., 50Hz or 60Hz). | **Verify Grid Quality:** Confirms the stability of the power being supplied to your factory. |
             """)
+
+        # --- Display AI Analysis Section (Moved to the bottom) ---
+        if 'ai_analysis' in st.session_state:
+            st.markdown("---")
+            st.header("🤖 AI-Powered Analysis")
+            st.markdown(st.session_state['ai_analysis'])
+
     elif uploaded_file is not None:
          st.warning("Could not process the uploaded file. Please ensure it is a valid, non-empty Hioki CSV export.")
 
