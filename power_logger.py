@@ -3,7 +3,7 @@ import pandas as pd
 import plotly.express as px
 from typing import Tuple, Optional
 
-# --- Data Processing Functions (Corrected Version) ---
+# --- Data Processing Functions ---
 
 def rename_power_columns(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -28,8 +28,7 @@ def rename_power_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 def process_hioki_csv(uploaded_file, header_keyword: str = 'Date') -> Optional[Tuple[pd.DataFrame, pd.DataFrame]]:
     """
-    Loads and cleans a Hioki power analyzer CSV file from a Streamlit upload.
-    This version correctly finds the header by searching for 'Date' in the first column.
+    Loads, cleans, and processes a Hioki power analyzer CSV file.
     """
     try:
         df_raw = pd.read_csv(uploaded_file, header=None, on_bad_lines='skip', encoding='utf-8')
@@ -37,12 +36,11 @@ def process_hioki_csv(uploaded_file, header_keyword: str = 'Date') -> Optional[T
         st.error(f"Error reading CSV file: {e}")
         return None
 
-    # Correctly search the first column for an exact match of the header keyword ('Date')
     search_column = df_raw.iloc[:, 0].astype(str)
     header_indices = search_column[search_column.eq(header_keyword)].index
     
     if header_indices.empty:
-        st.error(f"Error: Header keyword '{header_keyword}' not found in the first column. Please ensure the CSV is a valid Hioki export.")
+        st.error(f"Error: Header keyword '{header_keyword}' not found in the first column.")
         return None
     header_row_index = header_indices[0]
 
@@ -68,9 +66,16 @@ def process_hioki_csv(uploaded_file, header_keyword: str = 'Date') -> Optional[T
         data_df[col] = pd.to_numeric(data_df[col], errors='coerce')
         
     data_df = rename_power_columns(data_df)
+    
+    # Convert W to kW and Wh to kWh for easier analysis
+    for col in ['Average Real Power (W)', 'Average Apparent Power (VA)', 'Average Reactive Power (VAR)', 'Power Demand Consumed (W)']:
+        if col in data_df.columns:
+            new_col_name = col.replace('(W)', '(kW)').replace('(VA)', '(kVA)').replace('(VAR)', '(kVAR)')
+            data_df[new_col_name] = data_df[col] / 1000
+
     return params_df, data_df
 
-# --- Streamlit App Layout (No changes needed here) ---
+# --- Streamlit App Layout ---
 
 st.set_page_config(layout="wide", page_title="FMF Power Consumption Analysis")
 
@@ -85,33 +90,54 @@ uploaded_file = st.sidebar.file_uploader("Upload a raw CSV from your Hioki Power
 if uploaded_file is None:
     st.info("Please upload a CSV file to begin analysis.")
 else:
-    # The function call now correctly uses 'Date' as the default keyword
     parameters, data = process_hioki_csv(uploaded_file)
 
-    if parameters is not None and data is not None:
+    if parameters is not None and data is not None and not data.empty:
         st.sidebar.success("File processed successfully!")
         
         # --- Main Dashboard ---
         st.header("Analysis Overview")
 
-        # Key Metrics
-        total_consumed_kwh = (data['Consumed Real Energy (Wh)'].iloc[-1] - data['Consumed Real Energy (Wh)'].iloc[0]) / 1000
-        max_demand_kw = data['Power Demand Consumed (W)'].max() / 1000
-        avg_pf = data['Average Power Factor'][data['Average Power Factor'] > 0].mean()
+        # --- UPDATED: Key Metrics Display ---
+        duration = data['Datetime'].max() - data['Datetime'].min()
+        days = duration.days
+        hours, remainder = divmod(duration.seconds, 3600)
+        minutes, _ = divmod(remainder, 60)
+        duration_str = f"{days}d {hours}h {minutes}m"
 
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Total Consumed Energy", f"{total_consumed_kwh:.2f} kWh")
-        col2.metric("Peak Power Demand", f"{max_demand_kw:.2f} kW")
-        col3.metric("Average Power Factor", f"{avg_pf:.3f}", delta=f"{avg_pf - 0.95:.3f}", delta_color="inverse", help="Target is > 0.95. A negative delta is bad.")
+        total_consumed_kwh = 0
+        if 'Consumed Real Energy (Wh)' in data.columns and not data['Consumed Real Energy (Wh)'].dropna().empty:
+            total_consumed_kwh = (data['Consumed Real Energy (Wh)'].dropna().iloc[-1] - data['Consumed Real Energy (Wh)'].dropna().iloc[0]) / 1000
+
+        avg_power_kw = 0
+        if 'Average Real Power (kW)' in data.columns:
+            avg_power_kw = data['Average Real Power (kW)'].mean()
+
+        max_demand_kw = 0
+        if 'Power Demand Consumed (kW)' in data.columns:
+            max_demand_kw = data['Power Demand Consumed (kW)'].max()
+        
+        avg_pf = 0
+        if 'Average Power Factor' in data.columns and not data['Average Power Factor'].dropna().empty:
+            avg_pf = data['Average Power Factor'][data['Average Power Factor'] > 0].mean()
+
+        col1, col2, col3, col4, col5 = st.columns(5)
+        col1.metric("Measurement Duration", duration_str)
+        col2.metric("Total Consumed Energy", f"{total_consumed_kwh:.2f} kWh")
+        col3.metric("Average Power", f"{avg_power_kw:.2f} kW")
+        col4.metric("Peak Demand", f"{max_demand_kw:.2f} kW")
+        col5.metric("Average Power Factor", f"{avg_pf:.3f}", delta=f"{avg_pf - 0.95:.3f}", delta_color="inverse" if avg_pf > 0 else "off", help="Target is > 0.95. A negative delta is bad.")
+        
+        st.markdown("---")
 
         # Tabs for different analyses
         tab1, tab2, tab3, tab4, tab5 = st.tabs(["⚡ Power & Current", "⚖️ Power Factor Analysis", "📈 Demand Analysis", "📋 Summary Parameters", "📖 Variable Explanations"])
 
         with tab1:
             st.subheader("Power Consumption Over Time")
-            fig_power = px.line(data, x='Datetime', y=['Average Real Power (W)', 'Average Apparent Power (VA)', 'Average Reactive Power (VAR)'],
+            fig_power = px.line(data, x='Datetime', y=['Average Real Power (kW)', 'Average Apparent Power (kVA)', 'Average Reactive Power (kVAR)'],
                                 title="Real, Apparent, and Reactive Power", labels={"value": "Power", "variable": "Power Type"})
-            fig_power.update_layout(hovermode="x unified")
+            fig_power.update_layout(yaxis_title="Power (kVA, kW, kVAR)", hovermode="x unified")
             st.plotly_chart(fig_power, use_container_width=True)
 
             st.subheader("Current Draw Over Time")
@@ -135,9 +161,13 @@ else:
             **Power Demand** is the average power consumed over a short period (e.g., 15 or 30 minutes). Utility companies often apply a 'Demand Charge' based on the single highest peak in a billing cycle.
             **The Goal:** Reduce your peak demand by staggering start-ups of large machinery or shifting loads to off-peak times. This can significantly lower electricity bills.
             """)
-            fig_demand = px.line(data, x='Datetime', y='Power Demand Consumed (W)', title="Power Demand Profile")
-            peak_demand_time = data.loc[data['Power Demand Consumed (W)'].idxmax()]['Datetime']
-            fig_demand.add_vline(x=peak_demand_time, line_dash="dash", line_color="red", annotation_text=f"Peak Demand ({max_demand_kw:.2f} kW)")
+            fig_demand = px.line(data, x='Datetime', y='Power Demand Consumed (kW)', title="Power Demand Profile")
+            
+            demand_data = data['Power Demand Consumed (kW)'].dropna()
+            if not demand_data.empty:
+                peak_demand_time = data.loc[demand_data.idxmax()]['Datetime']
+                fig_demand.add_vline(x=peak_demand_time, line_dash="dash", line_color="red", annotation_text=f"Peak Demand ({max_demand_kw:.2f} kW)")
+            
             st.plotly_chart(fig_demand, use_container_width=True)
 
         with tab4:
@@ -148,12 +178,14 @@ else:
         with tab5:
             st.subheader("Variable Explanations")
             st.markdown("""
-            - **Average Real Power (W):** The 'useful' power performing work. This is what you want to use.
-            - **Average Apparent Power (VA):** The total power supplied by the utility (Real + Reactive).
-            - **Average Reactive Power (VAR):** The 'wasted' power required for motors. High values indicate inefficiency.
+            - **Average Real Power (kW):** The 'useful' power performing work. This is what you want to use.
+            - **Average Apparent Power (kVA):** The total power supplied by the utility (Real + Reactive).
+            - **Average Reactive Power (kVAR):** The 'wasted' power required for motors. High values indicate inefficiency.
             - **Average Power Factor:** The ratio of Real to Apparent Power. A direct score of your electrical efficiency.
-            - **Consumed Real Energy (Wh):** The total energy you are billed for over time.
-            - **Power Demand Consumed (W):** The basis for peak demand charges on your utility bill.
+            - **Consumed Real Energy (kWh):** The total energy you are billed for over time (calculated from the Wh column).
+            - **Power Demand Consumed (kW):** The basis for peak demand charges on your utility bill.
             - **Average Current (A):** High current can indicate mechanical stress or overload.
             """)
+    elif uploaded_file is not None:
+         st.warning("Could not process the uploaded file. Please ensure it is a valid, non-empty Hioki CSV export.")
 
