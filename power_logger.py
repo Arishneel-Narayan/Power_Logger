@@ -180,12 +180,18 @@ else:
         with tab6:
             st.subheader("Variable Explanations")
             st.markdown("""
-            - **Average Real Power (kW):** The 'useful' power performing work.
-            - **Average Apparent Power (kVA):** The total power supplied by the utility (Real + Reactive).
-            - **Average Reactive Power (kVAR):** The 'wasted' power required for motors.
-            - **Average Power Factor:** The ratio of Real to Apparent Power. A direct score of your electrical efficiency, corrected to always be positive.
-            - **Consumed Real Energy (kWh):** The total energy you are billed for, corrected for wiring issues.
-            - **Total Power Demand (kW):** The basis for peak demand charges, corrected for wiring issues.
+| Hioki Variable Name | Plain English Name | Significance & Insight | How It Helps Reduce Consumption |
+| :--- | :--- | :--- | :--- |
+| **P1_Avg[W]** | Average Real Power | The 'useful' power performing actual work (e.g., mixing dough). This is the component you want to use effectively. | **Quantify Waste:** Compare power draw during idle vs. active states to identify energy wasted by equipment not being shut down. |
+| **S1_Avg[VA]** | Average Apparent Power | The total power your system must be able to handle, including both useful (Real) and wasted (Reactive) power. | **System Capacity:** Reducing this (by improving Power Factor) can free up electrical capacity, potentially avoiding costly transformer upgrades. |
+| **Q1_Avg[var]** | Average Reactive Power | The 'wasted' power required solely to create magnetic fields for motors to operate. It does no useful work. | **Pinpoint Inefficiency:** This is the primary target for Power Factor Correction. High reactive power indicates significant potential savings. |
+| **PF1_Avg** | Average Power Factor | A direct score of electrical efficiency (Real Power / Apparent Power). 1.0 is perfect; < 0.95 is inefficient. | **Justify Investment:** Use this KPI to justify installing capacitor banks for Power Factor Correction, which directly eliminates utility penalties. |
+| **WP+1[Wh]** / **WP-1[Wh]** | Consumed / Exported Real Energy | The cumulative total of energy used over time. This is the primary metric your electricity bill is based on. | **Track Savings:** This is the ultimate measure of success. Track this value before and after process changes to validate energy savings. |
+| **Pdem+1[W]** / **Pdem-1[W]**| Power Demand (Consumed / Exported) | The average power usage over a short interval (e.g., 15 mins). Your utility bill's 'Demand Charge' is based on the highest peak. | **Reduce Peak Charges:** Identify when peaks occur and implement strategies like staggering machine start-ups to lower this value, directly cutting costs. |
+| **I1_Avg[A]** | Average Current | The flow of electricity. For a given task, higher current can indicate mechanical stress, friction, or overload. | **Predictive Maintenance:** Monitor current trends. A gradual increase at a constant speed often signals failing bearings or other issues that increase load. |
+| **WQLAG1[varh]** | Lagging Reactive Energy | The cumulative total of 'wasted' reactive power from motors. | **Size the Solution:** Use this value to accurately size the capacitor banks needed for a Power Factor Correction project. |
+| **U1_Avg[V]** | Average Voltage | The electrical potential supplied. Should be stable. | **Diagnose Supply Issues:** Significant voltage drops or instability can harm equipment and affect performance. This helps identify grid supply problems. |
+| **Freq_Avg[Hz]** | Average Frequency | The speed of the AC supply from the grid. Should be very stable (e.g., 50Hz or 60Hz). | **Verify Grid Quality:** Confirms the stability of the power being supplied to your factory. |
             """)
     elif uploaded_file is not None:
          st.warning("Could not process the uploaded file. Please ensure it is a valid, non-empty Hioki CSV export.")
