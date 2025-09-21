@@ -3,8 +3,7 @@ import pandas as pd
 import plotly.express as px
 from typing import Tuple, Optional
 
-# --- Data Processing Functions (from our previous script) ---
-# We include these directly in the Streamlit app file for a single-file deployment.
+# --- Data Processing Functions (Corrected Version) ---
 
 def rename_power_columns(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -27,9 +26,10 @@ def rename_power_columns(df: pd.DataFrame) -> pd.DataFrame:
     }
     return df.rename(columns=rename_map)
 
-def process_hioki_csv(uploaded_file, header_keyword: str = 'Status') -> Optional[Tuple[pd.DataFrame, pd.DataFrame]]:
+def process_hioki_csv(uploaded_file, header_keyword: str = 'Date') -> Optional[Tuple[pd.DataFrame, pd.DataFrame]]:
     """
     Loads and cleans a Hioki power analyzer CSV file from a Streamlit upload.
+    This version correctly finds the header by searching for 'Date' in the first column.
     """
     try:
         df_raw = pd.read_csv(uploaded_file, header=None, on_bad_lines='skip', encoding='utf-8')
@@ -37,8 +37,9 @@ def process_hioki_csv(uploaded_file, header_keyword: str = 'Status') -> Optional
         st.error(f"Error reading CSV file: {e}")
         return None
 
+    # Correctly search the first column for an exact match of the header keyword ('Date')
     search_column = df_raw.iloc[:, 0].astype(str)
-    header_indices = search_column[search_column.str.contains(header_keyword, na=False, case=False)].index
+    header_indices = search_column[search_column.eq(header_keyword)].index
     
     if header_indices.empty:
         st.error(f"Error: Header keyword '{header_keyword}' not found in the first column. Please ensure the CSV is a valid Hioki export.")
@@ -69,7 +70,7 @@ def process_hioki_csv(uploaded_file, header_keyword: str = 'Status') -> Optional
     data_df = rename_power_columns(data_df)
     return params_df, data_df
 
-# --- Streamlit App Layout ---
+# --- Streamlit App Layout (No changes needed here) ---
 
 st.set_page_config(layout="wide", page_title="FMF Power Consumption Analysis")
 
@@ -84,6 +85,7 @@ uploaded_file = st.sidebar.file_uploader("Upload a raw CSV from your Hioki Power
 if uploaded_file is None:
     st.info("Please upload a CSV file to begin analysis.")
 else:
+    # The function call now correctly uses 'Date' as the default keyword
     parameters, data = process_hioki_csv(uploaded_file)
 
     if parameters is not None and data is not None:
@@ -95,7 +97,7 @@ else:
         # Key Metrics
         total_consumed_kwh = (data['Consumed Real Energy (Wh)'].iloc[-1] - data['Consumed Real Energy (Wh)'].iloc[0]) / 1000
         max_demand_kw = data['Power Demand Consumed (W)'].max() / 1000
-        avg_pf = data['Average Power Factor'][data['Average Power Factor'] > 0].mean() # Exclude zeros for a real average
+        avg_pf = data['Average Power Factor'][data['Average Power Factor'] > 0].mean()
 
         col1, col2, col3 = st.columns(3)
         col1.metric("Total Consumed Energy", f"{total_consumed_kwh:.2f} kWh")
@@ -154,3 +156,4 @@ else:
             - **Power Demand Consumed (W):** The basis for peak demand charges on your utility bill.
             - **Average Current (A):** High current can indicate mechanical stress or overload.
             """)
+
