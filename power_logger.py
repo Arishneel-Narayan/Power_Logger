@@ -20,7 +20,6 @@ def get_rename_map(wiring_system: str) -> dict:
         'SENSOR': 'Current Sensor Model', 'VT(PT)': 'Voltage Transformer Ratio', 'CT': 'Current Transformer Ratio'
     }
     
-    # --- Base dictionary for technical names to plain English ---
     base_names = {
         'U': 'Voltage', 'I': 'Current', 'P': 'Real Power', 'S': 'Apparent Power',
         'Q': 'Reactive Power', 'PF': 'Power Factor', 'Freq': 'Grid Frequency',
@@ -37,10 +36,9 @@ def get_rename_map(wiring_system: str) -> dict:
 
     ts_map = {'Status': 'Machine Status'}
 
-    # --- Generate all possible name combinations ---
     phases = []
     if '1P2W' in wiring_system:
-        phases = [('1', '')] # Suffix, Prefix
+        phases = [('1', '')]
     elif '3P4W' in wiring_system:
         phases = [('1', 'L1 '), ('2', 'L2 '), ('3', 'L3 '), ('sum', 'Total ')]
 
@@ -48,22 +46,15 @@ def get_rename_map(wiring_system: str) -> dict:
         for phase_suffix, phase_prefix in phases:
             for suffix_key, suffix_val in suffixes.items():
                 for unit_key, unit_val in units.items():
-                    # e.g., U1_max[V] -> L1 Max Voltage (V)
                     hioki_name = f"{tech_prefix}{phase_suffix}{suffix_key}[{unit_key}]"
                     eng_name = f"{phase_prefix}{suffix_val} {eng_prefix} {unit_val}"
                     ts_map[hioki_name] = eng_name
-            # Handle cases without units (like Power Factor)
-            hioki_name_no_unit = f"{tech_prefix}{phase_suffix}{suffixes.get('_Avg','')}" # PFsum_Avg
-            eng_name_no_unit = f"{phase_prefix}Avg {eng_prefix}"
-            if 'PF' in tech_prefix: # Special handling for PF
+            if 'PF' in tech_prefix:
                  ts_map[f"{tech_prefix}{phase_suffix}_Avg"] = f"{phase_prefix}Power Factor"
 
-    # Add specific one-off cases not caught by the loop
     ts_map.update({
-        'Pdem+1[W]': 'Power Demand (W)',
-        'Pdem+sum[W]': 'Total Power Demand (W)',
-        'WP+1[Wh]': 'Consumed Real Energy (Wh)',
-        'WP+sum[Wh]': 'Total Consumed Real Energy (Wh)'
+        'Pdem+1[W]': 'Power Demand (W)', 'Pdem+sum[W]': 'Total Power Demand (W)',
+        'WP+1[Wh]': 'Consumed Real Energy (Wh)', 'WP+sum[Wh]': 'Total Consumed Real Energy (Wh)'
     })
 
     return param_map, ts_map
@@ -123,7 +114,7 @@ def process_hioki_csv(uploaded_file) -> Optional[Tuple[str, pd.DataFrame, pd.Dat
         removed_data = data_df[is_flat].copy()
 
         if not removed_data.empty:
-            st.sidebar.warning(f"{len(removed_data)} inactive data points removed from main analysis.")
+            st.sidebar.warning(f"{len(removed_data)} inactive data points were removed from main analysis.")
             data_df = active_data
 
     if wiring_system == '3P4W':
@@ -152,7 +143,6 @@ def process_hioki_csv(uploaded_file) -> Optional[Tuple[str, pd.DataFrame, pd.Dat
 # --- 2. AI and PDF Generation Services ---
 
 def get_gemini_analysis(summary_metrics, data_stats, params_info, additional_context=""):
-    # ... (This function is unchanged)
     system_prompt = """You are an expert industrial energy efficiency analyst and process engineer for FMF Foods Ltd., a food manufacturing company in Fiji. Your task is to analyze power consumption data from industrial machinery at our biscuit factory in Suva. Your analysis must be framed within the context of a manufacturing environment. Consider operational cycles, equipment health, and system reliability. Most importantly, link your findings directly to cost-saving opportunities, specifically addressing EFL's two-part tariff structure (Energy Charge + Demand Charge + VAT). Mention how improving power factor reduces kVA demand and how lowering peak demand (MD) directly reduces the monthly demand charge. Provide a concise, actionable report in Markdown format with three sections: 1. Executive Summary, 2. Key Observations & Pattern Analysis, and 3. Actionable Recommendations. Address the user as a fellow process optimization engineer."""
     user_prompt = f"""
     Good morning, Please analyze the following power consumption data for an industrial machine at our Suva facility, keeping in mind our electricity costs are based on EFL's Maximum Demand tariff.
@@ -187,7 +177,6 @@ def get_gemini_analysis(summary_metrics, data_stats, params_info, additional_con
         return f"An unexpected error occurred: {e}"
 
 class PDF(FPDF):
-    # ... (This class is unchanged)
     def header(self):
         self.set_font('Arial', 'B', 12)
         self.cell(0, 10, 'FMF Power Consumption Analysis Report', 0, 1, 'C')
@@ -226,15 +215,14 @@ class PDF(FPDF):
             self.ln()
             self.set_font('Arial', 'I', 10)
             self.multi_cell(0, 5, insight)
-        except RuntimeError as e:
+        except RuntimeError:
             self.set_font('Arial', 'I', 10)
             self.set_text_color(255, 0, 0)
-            self.multi_cell(0, 5, f"[Chart rendering failed due to an environment issue. The data is still valid.]")
+            self.multi_cell(0, 5, "[Chart rendering failed due to a server environment issue. The data is still valid.]")
             self.set_text_color(0, 0, 0)
         self.ln(10)
 
 def create_report_pdf(filename, kpis, ai_analysis_text, figures, context):
-    # ... (This function is unchanged)
     pdf = PDF()
     pdf.add_page()
     pdf.chapter_title(f"Analysis for: {filename}")
@@ -243,7 +231,7 @@ def create_report_pdf(filename, kpis, ai_analysis_text, figures, context):
         pdf.cell(0, 5, "Engineer's Context:")
         pdf.ln()
         pdf.set_font('Arial', 'I', 10)
-        pdf.multi_cell(0, 5, context)
+        pdf.multi_cell(0, 5, context.encode('latin-1', 'replace').decode('latin-1'))
         pdf.ln(5)
     pdf.chapter_title("Key Performance & Cost Indicators")
     pdf.add_kpis(kpis)
@@ -255,7 +243,9 @@ def create_report_pdf(filename, kpis, ai_analysis_text, figures, context):
         pdf.chapter_title("Graphical Analysis")
         for fig_title, fig_data in figures.items():
             pdf.add_plot(fig_data['fig'], fig_title, fig_data['insight'])
-    return pdf.output(dest='S').encode('latin-1')
+    
+    # --- CORRECTED RETURN STATEMENT ---
+    return pdf.output()
 
 
 # --- 3. Streamlit UI and Analysis Section ---
@@ -267,7 +257,17 @@ st.sidebar.header("Upload Data")
 uploaded_file = st.sidebar.file_uploader("Upload a raw CSV from your Hioki Power Analyzer", type=["csv"])
 st.sidebar.markdown("---")
 st.sidebar.subheader("EFL Tariff Structure")
-energy_rate = st.sidebar.number_input("Energy Rate (FJD/kWh)", min_value=0.00, value=0.61, step=0.01, help="Base rate + fuel surcharge.")
+tariff_option = st.sidebar.radio(
+    "Select Monthly Consumption Tier:",
+    ('Standard Use (< 15,000 kWh)', 'High Use (> 15,000 kWh)'),
+    help="Select the tier that reflects your factory's typical monthly usage to apply the correct EFL energy rate."
+)
+if tariff_option == 'Standard Use (< 15,000 kWh)':
+    energy_rate = 0.4099
+    st.sidebar.caption(f"Applied Rate: FJD {energy_rate:.4f}/kWh (VAT Exclusive)")
+else:
+    energy_rate = 0.4295
+    st.sidebar.caption(f"Applied Rate: FJD {energy_rate:.4f}/kWh (VAT Exclusive)")
 demand_rate = st.sidebar.number_input("Demand Rate (FJD/kVA/month)", min_value=0.00, value=25.41, step=0.01, help="EFL's monthly charge applied to your peak Apparent Power (MD in kVA).")
 vat_rate = st.sidebar.number_input("VAT Rate (%)", min_value=0.0, value=15.0, step=0.5, help="Value Added Tax rate.")
 
@@ -283,7 +283,6 @@ else:
         if not data.empty:
             st.sidebar.markdown("---")
             st.sidebar.subheader("Filter Data by Time")
-            # Convert to Python native datetime to avoid Streamlit serialization issues
             dt_options = data['Datetime'].dt.to_pydatetime()
             start_time, end_time = st.sidebar.select_slider(
                 "Select a time range for analysis:",
@@ -300,15 +299,14 @@ else:
             st.header("Single-Phase Performance Analysis")
             
             total_kwh = 0
-            # Use 'Consumed Real Energy (Wh)' if available
             energy_col = 'Consumed Real Energy (Wh)'
             if energy_col in data.columns and not data[energy_col].dropna().empty:
                 energy_vals = data[energy_col].dropna()
                 if len(energy_vals) > 1: total_kwh = (energy_vals.iloc[-1] - energy_vals.iloc[0]) / 1000
             
-            peak_kva = data['Avg Apparent Power (kVA)'].max() if 'Avg Apparent Power (kVA)' in data.columns and not data['Avg Apparent Power (kVA)'].dropna().empty else 0
-            avg_kw = data['Avg Real Power (kW)'].abs().mean() if 'Avg Real Power (kW)' in data.columns and not data['Avg Real Power (kW)'].dropna().empty else 0
-            avg_pf = data['Power Factor'].abs().mean() if 'Power Factor' in data.columns and not data['Power Factor'].dropna().empty else 0
+            peak_kva = data['Avg Apparent Power (kVA)'].max() if 'Avg Apparent Power (kVA)' in data.columns else 0
+            avg_kw = data['Avg Real Power (kW)'].abs().mean() if 'Avg Real Power (kW)' in data.columns else 0
+            avg_pf = data['Power Factor'].abs().mean() if 'Power Factor' in data.columns else 0
             duration_hours = (data['Datetime'].max() - data['Datetime'].min()).total_seconds() / 3600 if not data.empty else 0
             
             energy_cost, demand_cost, subtotal_cost, vat_cost, total_cost = (0, 0, 0, 0, 0)
@@ -325,7 +323,7 @@ else:
             col2.metric("Peak Demand (MD)", f"{peak_kva:.2f} kVA" if peak_kva > 0 else "N/A")
             col3.metric("Average Power Draw", f"{avg_kw:.2f} kW" if avg_kw > 0 else "N/A")
             col4.metric("Average Power Factor", f"{avg_pf:.3f}" if avg_pf > 0 else "N/A")
-
+            
             st.subheader("EFL Cost Breakdown")
             cost_help_text = f"For the {duration_hours:.1f} hour measurement period."
             col5, col6, col7, col8, col9 = st.columns(5)
@@ -334,7 +332,7 @@ else:
             col7.metric("Subtotal", f"FJD {subtotal_cost:.2f}", help=cost_help_text)
             col8.metric(f"VAT ({vat_rate}%)", f"FJD {vat_cost:.2f}", help=cost_help_text)
             col9.metric("Grand Total", f"FJD {total_cost:.2f}", help=cost_help_text)
-            
+
             kpi_summary = { "Analysis Mode": "Single-Phase", "Grand Total Cost": f"FJD {total_cost:.2f}", "Energy Charge": f"FJD {energy_cost:.2f}", "Demand Charge": f"FJD {demand_cost:.2f}" }
             
             tab_names = ["⚡ Power & Energy", "📝 Measurement Settings", "📋 Active Data"]
