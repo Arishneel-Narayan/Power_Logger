@@ -48,7 +48,7 @@ def get_rename_map(wiring_system: str) -> dict:
 def process_hioki_csv(uploaded_file) -> Optional[Tuple[str, pd.DataFrame, pd.DataFrame]]:
     """
     Main data processing pipeline. It now returns the detected wiring system
-    along with the two cleaned DataFrames.
+    along with the two cleaned DataFrames, and derives total power if missing.
     """
     try:
         df_raw = pd.read_csv(uploaded_file, header=None, on_bad_lines='skip', encoding='utf-8')
@@ -90,7 +90,31 @@ def process_hioki_csv(uploaded_file) -> Optional[Tuple[str, pd.DataFrame, pd.Dat
     for col in data_df.columns:
         if any(keyword in str(col) for keyword in ['(W)', '(VA)', 'VAR', '(V)', '(A)', 'Factor', 'Energy', '(Hz)']):
             data_df[col] = pd.to_numeric(data_df[col], errors='coerce')
-    
+
+    # --- NEW: Data Derivation Step ---
+    if wiring_system == '3P4W':
+        power_cols = ['L1 Real Power (W)', 'L2 Real Power (W)', 'L3 Real Power (W)']
+        if all(c in data_df.columns for c in power_cols) and 'Total Real Power (W)' not in data_df.columns:
+            st.sidebar.info("Calculating Total Power from phase data.")
+            data_df['Total Real Power (W)'] = data_df[power_cols].sum(axis=1)
+            
+            apparent_cols = ['L1 Apparent Power (VA)', 'L2 Apparent Power (VA)', 'L3 Apparent Power (VA)']
+            if all(c in data_df.columns for c in apparent_cols):
+                data_df['Total Apparent Power (VA)'] = data_df[apparent_cols].sum(axis=1)
+
+            reactive_cols = ['L1 Reactive Power (VAR)', 'L2 Reactive Power (VAR)', 'L3 Reactive Power (VAR)']
+            if all(c in data_df.columns for c in reactive_cols):
+                 data_df['Total Reactive Power (VAR)'] = data_df[reactive_cols].sum(axis=1)
+
+            # Accurately calculate Total Power Factor
+            if 'Total Real Power (W)' in data_df.columns and 'Total Apparent Power (VA)' in data_df.columns:
+                # Avoid division by zero
+                data_df['Total Power Factor'] = data_df.apply(
+                    lambda row: row['Total Real Power (W)'] / row['Total Apparent Power (VA)'] if row['Total Apparent Power (VA)'] != 0 else 0,
+                    axis=1
+                )
+
+    # Convert all W, VA, VAR to their 'kilo' counterparts
     for col_name in data_df.columns:
         if '(W)' in col_name or '(VA)' in col_name or '(VAR)' in col_name:
             new_col_name = col_name.replace('(W)', '(kW)').replace('(VA)', '(kVA)').replace(' (VAR)', ' (kVAR)')
@@ -136,7 +160,6 @@ Provide a concise, actionable report in Markdown format with three sections: 1. 
     except (KeyError, FileNotFoundError):
         return "Error: Gemini API key not found. Please add it to your Streamlit Secrets."
 
-    # --- CORRECTED API URL ---
     api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key={api_key}"
     
     payload = {
