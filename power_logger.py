@@ -137,7 +137,7 @@ Provide a concise, actionable report in Markdown format with three sections: 1. 
         return "Error: Gemini API key not found. Please add it to your Streamlit Secrets."
 
     # --- CORRECTED API URL ---
-    api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key={api_key}"
+    api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key={api_key}"
     
     payload = {
         "contents": [{"parts": [{"text": user_prompt}]}],
