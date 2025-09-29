@@ -91,7 +91,6 @@ def process_hioki_csv(uploaded_file) -> Optional[Tuple[pd.DataFrame, pd.DataFram
         st.error(f"Error reading CSV file: {e}")
         return None
 
-    # Find where the actual data table starts by looking for the 'Date' keyword.
     search_column = df_raw.iloc[:, 0].astype(str)
     header_indices = search_column[search_column.eq('Date')].index
     if header_indices.empty:
@@ -99,16 +98,13 @@ def process_hioki_csv(uploaded_file) -> Optional[Tuple[pd.DataFrame, pd.DataFram
         return None
     header_row_index = header_indices[0]
 
-    # Split the file into two parts: the settings (above 'Date') and the data (from 'Date' down).
     params_df = df_raw.iloc[:header_row_index, :2].copy()
     params_df.columns = ['Parameter', 'Value']
     params_df.set_index('Parameter', inplace=True)
     params_df.dropna(inplace=True)
 
-    # Translate the parameter names into plain English.
     params_df = params_df.rename(index=get_parameter_rename_map())
 
-    # Detect the wiring system from the newly translated parameters.
     try:
         wiring_system = params_df.loc['Wiring System', 'Value']
         st.sidebar.info(f"Detected Wiring System: **{wiring_system}**")
@@ -116,35 +112,29 @@ def process_hioki_csv(uploaded_file) -> Optional[Tuple[pd.DataFrame, pd.DataFram
         st.sidebar.error("Could not determine the wiring system from the file's metadata.")
         return None
 
-    # Process the main data table.
     data_df = df_raw.iloc[header_row_index:].copy()
     data_df.columns = data_df.iloc[0]
     data_df = data_df.iloc[1:].reset_index(drop=True)
 
-    # Rename the data columns based on the detected wiring system.
     data_df = data_df.rename(columns=get_timeseries_rename_map(wiring_system))
 
     # --- Data Cleaning and Transformation ---
-    # Create a proper Datetime column for time-series plotting.
     data_df['Datetime'] = pd.to_datetime(data_df['Date'] + ' ' + data_df['Etime'], errors='coerce')
     data_df = data_df.dropna(subset=['Datetime']).sort_values(by='Datetime').reset_index(drop=True)
 
-    # Convert all relevant columns to numbers for calculations.
     for col in data_df.columns:
-        if '(W)' in col or '(VA)' in col or '(VAR)' in col or '(Hz)' in col or '(V)' in col or '(A)' in col or 'Factor' in col or 'Energy' in col:
+        if any(keyword in str(col) for keyword in ['(W)', '(VA)', '(VAR)', '(Hz)', '(V)', '(A)', 'Factor', 'Energy']):
             data_df[col] = pd.to_numeric(data_df[col], errors='coerce')
 
     # --- Feature Engineering and Robust Calculations ---
-    # Handle potentially missing power demand data gracefully.
     if 'Power Demand Consumed (W)' in data_df.columns and 'Power Demand Exported (W)' in data_df.columns:
         pdem_plus = data_df['Power Demand Consumed (W)'].fillna(0)
         pdem_minus = data_df['Power Demand Exported (W)'].fillna(0)
         data_df['Total Power Demand (kW)'] = (pdem_plus.abs() + pdem_minus.abs()) / 1000
     else:
         st.warning("Power Demand data not found in this file. Peak Demand analysis will be unavailable.")
-        data_df['Total Power Demand (kW)'] = 0  # Create a placeholder column.
+        data_df['Total Power Demand (kW)'] = 0
 
-    # Correct Power Factor for potential wiring reversal and convert power to kilo-units.
     if 'Average Power Factor' in data_df.columns:
         data_df['Average Power Factor'] = data_df['Average Power Factor'].abs()
 
@@ -160,7 +150,6 @@ def get_gemini_analysis(summary_metrics, data_stats, params_info):
     """
     Sends processed data to the Gemini API for an expert-level analysis.
     """
-    # This prompt primes the AI to act as an energy efficiency expert for FMF.
     system_prompt = """You are an expert industrial energy efficiency analyst and process engineer for FMF Foods Ltd., a food manufacturing company in Fiji. Your task is to analyze the provided power consumption data, statistics, and trend graphs from an industrial machine. Provide a concise, actionable report in Markdown format. The report should have three sections: 1. Executive Summary, 2. Key Observations & Pattern Analysis, and 3. Actionable Recommendations for Cost Reduction. Be specific and base your analysis strictly on the data provided. Address the user as a process optimization engineer."""
 
     user_prompt = f"""
@@ -197,7 +186,6 @@ def get_gemini_analysis(summary_metrics, data_stats, params_info):
     except Exception as e:
         return f"An unexpected error occurred during AI analysis: {e}"
 
-
 # --- 3. Streamlit User Interface ---
 st.set_page_config(layout="wide", page_title="FMF Power Consumption Analysis")
 
@@ -220,11 +208,13 @@ else:
 
         st.header("Analysis Overview")
 
-        # --- KPI Calculations ---
-        total_consumed_kwh = 0
-        energy_data = data['Consumed Real Energy (Wh)'].dropna()
-        if len(energy_data) > 1:
-            total_consumed_kwh = (energy_data.iloc[-1] - energy_data.iloc[0]) / 1000
+        # --- KPI Calculations with Robustness Checks ---
+        total_consumed_kwh_str = "N/A"
+        if 'Consumed Real Energy (Wh)' in data.columns:
+            energy_data = data['Consumed Real Energy (Wh)'].dropna()
+            if len(energy_data) > 1:
+                total_consumed_kwh = (energy_data.iloc[-1] - energy_data.iloc[0]) / 1000
+                total_consumed_kwh_str = f"{total_consumed_kwh:.2f} kWh"
 
         duration = data['Datetime'].max() - data['Datetime'].min()
         days, rem = divmod(duration.total_seconds(), 86400)
@@ -236,30 +226,26 @@ else:
         max_demand_kw = data['Total Power Demand (kW)'].max()
         avg_pf = data['Average Power Factor'].mean()
 
-        # --- Display KPIs ---
         col1, col2, col3, col4, col5 = st.columns(5)
         col1.metric("Measurement Duration", duration_str)
-        col2.metric("Total Consumed Energy", f"{total_consumed_kwh:.2f} kWh")
+        col2.metric("Total Consumed Energy", total_consumed_kwh_str, help="'N/A' if not measured in the source file.")
         col3.metric("Average Power", f"{avg_power_kw:.2f} kW")
-        col4.metric("Peak Demand", f"{max_demand_kw:.2f} kW" if max_demand_kw > 0 else "N/A", help="The highest power draw, which can affect utility bills. 'N/A' if not measured.")
-        col5.metric("Average Power Factor", f"{avg_pf:.3f}", delta=f"{avg_pf - 0.95:.3f}" if avg_pf < 0.95 else None, delta_color="inverse", help="Efficiency score (target > 0.95). A negative delta is bad.")
+        col4.metric("Peak Demand", f"{max_demand_kw:.2f} kW" if max_demand_kw > 0 else "N/A", help="Highest power draw. 'N/A' if not measured.")
+        col5.metric("Average Power Factor", f"{avg_pf:.3f}", delta=f"{avg_pf - 0.95:.3f}" if avg_pf < 0.95 else None, delta_color="inverse", help="Efficiency score (target > 0.95).")
 
         st.markdown("---")
 
-        # --- AI Analysis Section ---
         st.sidebar.markdown("---")
         if st.sidebar.button("🤖 Get AI-Powered Insights", help="Analyzes the current data to provide actionable recommendations."):
             with st.spinner("🧠 The AI is analyzing your data... This may take a moment."):
-                summary_metrics_text = f"- Measurement Duration: {duration_str}\n- Total Consumed Energy: {total_consumed_kwh:.2f} kWh\n- Average Power: {avg_power_kw:.2f} kW\n- Peak Demand: {max_demand_kw:.2f} kW\n- Average Power Factor: {avg_pf:.3f}"
+                summary_metrics_text = f"- Measurement Duration: {duration_str}\n- Total Consumed Energy: {total_consumed_kwh_str}\n- Average Power: {avg_power_kw:.2f} kW\n- Peak Demand: {'{:.2f} kW'.format(max_demand_kw) if max_demand_kw > 0 else 'N/A'}\n- Average Power Factor: {avg_pf:.3f}"
                 stats_cols = ['Average Real Power (kW)', 'Average Apparent Power (kVA)', 'Average Reactive Power (kVAR)', 'Average Power Factor', 'Average Current (A)', 'Total Power Demand (kW)']
                 existing_stats_cols = [col for col in stats_cols if col in data.columns]
                 data_stats_text = data[existing_stats_cols].describe().to_string()
                 params_info_text = parameters.to_string()
-
                 ai_response = get_gemini_analysis(summary_metrics_text, data_stats_text, params_info_text)
                 st.session_state['ai_analysis'] = ai_response
 
-        # --- Visualization and Data Tabs ---
         tab_list = ["⚡ Power & Current", "⚖️ Power Factor", "📈 Peak Demand", "📋 Cleaned Time-Series Data", "📝 Measurement Settings"]
         tab1, tab2, tab3, tab4, tab5 = st.tabs(tab_list)
 
@@ -297,7 +283,6 @@ else:
             st.subheader("Measurement Settings")
             st.dataframe(parameters)
 
-        # --- Display AI Analysis at the bottom ---
         if 'ai_analysis' in st.session_state:
             st.markdown("---")
             st.header("🤖 AI-Powered Analysis")
@@ -305,3 +290,4 @@ else:
 
     elif uploaded_file is not None:
          st.warning("Could not process the uploaded file. Please ensure it is a valid, non-empty Hioki CSV export.")
+
