@@ -136,7 +136,8 @@ Provide a concise, actionable report in Markdown format with three sections: 1. 
     except (KeyError, FileNotFoundError):
         return "Error: Gemini API key not found. Please add it to your Streamlit Secrets."
 
-    api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+    # --- CORRECTED API URL ---
+    api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key={api_key}"
     
     payload = {
         "contents": [{"parts": [{"text": user_prompt}]}],
