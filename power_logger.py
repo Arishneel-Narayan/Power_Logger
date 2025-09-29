@@ -243,7 +243,16 @@ def create_report_pdf(filename, kpis, ai_analysis_text, figures, context):
         pdf.chapter_title("Graphical Analysis")
         for fig_title, fig_data in figures.items():
             pdf.add_plot(fig_data['fig'], fig_title, fig_data['insight'])
-    return pdf.output().encode('latin-1')
+    
+    # --- CORRECTED RETURN STATEMENT ---
+    # The fpdf library's output(dest='S') method can return a string in some environments.
+    # To be safe, we encode it to latin-1 bytes, which is the standard for PDF.
+    # If it's already bytes, this may not be strictly necessary, but it provides robustness.
+    # The final, correct fix is to ensure it's always bytes.
+    output = pdf.output(dest='S')
+    if isinstance(output, str):
+        return output.encode('latin-1')
+    return output
 
 
 # --- 3. Streamlit UI and Analysis Section ---
