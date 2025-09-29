@@ -7,7 +7,6 @@ import requests
 # --- 1. Core Data Processing Engine ---
 # This section contains the main logic for interpreting the raw CSV files.
 
-<<<<<<< HEAD
 def get_parameter_rename_map() -> dict:
     """
     Provides a dictionary to translate cryptic measurement setting names from the
@@ -26,56 +25,9 @@ def get_parameter_rename_map() -> dict:
         'PULSE': 'Pulse Rate',
         'ENERGY COST': 'Energy Cost Rate'
     }
-=======
-def get_rename_map(wiring_system: str) -> dict:
-    """
-    Returns the appropriate column rename map based on the wiring system.
-    """
-    # Generic columns that are common or will be the target names
-    base_map = {
-        'Status': 'Machine Status', 'Freq_Avg[Hz]': 'Average Frequency (Hz)',
-        'U1_Avg[V]': 'Average Voltage (V)', 'Ufnd1_Avg[V]': 'Fundamental Voltage (V)',
-        'Udeg1_Avg[deg]': 'Voltage Phase Angle (deg)', 'I1_Avg[A]': 'Average Current (A)',
-        'Ifnd1_Avg[A]': 'Fundamental Current (A)', 'Ideg1_Avg[deg]': 'Current Phase Angle (deg)',
-        'Ecost1': 'Estimated Cost', 'Pulse': 'Pulse Count'
-    }
-
-    # Columns specific to single-phase (1P2W) systems
-    if '1P2W' in wiring_system:
-        single_phase_map = {
-            'P1_Avg[W]': 'Average Real Power (W)', 'S1_Avg[VA]': 'Average Apparent Power (VA)',
-            'Q1_Avg[var]': 'Average Reactive Power (VAR)', 'PF1_Avg': 'Average Power Factor',
-            'WP+1[Wh]': 'Consumed Real Energy (Wh)', 'WP-1[Wh]': 'Exported Real Energy (Wh)',
-            'WQLAG1[varh]': 'Lagging Reactive Energy (VARh)', 'WQLEAD1[varh]': 'Leading Reactive Energy (VARh)',
-            'WP+dem1[Wh]': 'Consumed Energy (Demand Period)', 'WP-dem1[Wh]': 'Exported Energy (Demand Period)',
-            'WQLAGdem1[varh]': 'Lagging Reactive Energy (Demand Period)', 'WQLEADdem1[varh]': 'Leading Reactive Energy (Demand Period)',
-            'Pdem+1[W]': 'Power Demand Consumed (W)', 'Pdem-1[W]': 'Power Demand Exported (W)',
-            'QdemLAG1[var]': 'Lagging Reactive Power (Demand)', 'QdemLEAD1[var]': 'Leading Reactive Power (Demand)',
-            'PFdem1': 'Power Factor (Demand)'
-        }
-        base_map.update(single_phase_map)
-
-    # Columns specific to three-phase (3P4W) systems, mapping the 'sum' columns
-    elif '3P4W' in wiring_system:
-        three_phase_map = {
-            'Psum_Avg[W]': 'Average Real Power (W)', 'Ssum_Avg[VA]': 'Average Apparent Power (VA)',
-            'Qsum_Avg[var]': 'Average Reactive Power (VAR)', 'PFsum_Avg': 'Average Power Factor',
-            'WP+sum[Wh]': 'Consumed Real Energy (Wh)', 'WP-sum[Wh]': 'Exported Real Energy (Wh)',
-            'WQLAGsum[varh]': 'Lagging Reactive Energy (VARh)', 'WQLEADsum[varh]': 'Leading Reactive Energy (VARh)',
-            'WP+dem_sum[Wh]': 'Consumed Energy (Demand Period)', 'WP-dem_sum[Wh]': 'Exported Energy (Demand Period)',
-            'WQLAGdem_sum[varh]': 'Lagging Reactive Energy (Demand Period)', 'WQLEADdem_sum[varh]': 'Leading Reactive Energy (Demand Period)',
-            'Pdem+sum[W]': 'Power Demand Consumed (W)', 'Pdem-sum[W]': 'Power Demand Exported (W)',
-            'QdemLAGsum[var]': 'Lagging Reactive Power (Demand)', 'QdemLEADsum[var]': 'Leading Reactive Power (Demand)',
-            'PFdem_sum': 'Power Factor (Demand)'
-        }
-        base_map.update(three_phase_map)
-        
-    return base_map
->>>>>>> 8108238eccba4bb7f0ba7f412c9e03ca9b32ef10
 
 def get_timeseries_rename_map(wiring_system: str) -> dict:
     """
-<<<<<<< HEAD
     Dynamically generates the correct column rename map based on the detected
     electrical wiring system (single-phase vs. three-phase). This is the core
     of the app's robustness.
@@ -132,10 +84,6 @@ def process_hioki_csv(uploaded_file) -> Optional[Tuple[pd.DataFrame, pd.DataFram
 
     Returns:
         A tuple containing (parameters_df, data_df) or None if processing fails.
-=======
-    Loads, cleans, and processes a Hioki power analyzer CSV file,
-    adapting to both single-phase and three-phase wiring systems.
->>>>>>> 8108238eccba4bb7f0ba7f412c9e03ca9b32ef10
     """
     try:
         df_raw = pd.read_csv(uploaded_file, header=None, on_bad_lines='skip', encoding='utf-8')
@@ -157,7 +105,6 @@ def process_hioki_csv(uploaded_file) -> Optional[Tuple[pd.DataFrame, pd.DataFram
     params_df.set_index('Parameter', inplace=True)
     params_df.dropna(inplace=True)
 
-<<<<<<< HEAD
     # Translate the parameter names into plain English.
     params_df = params_df.rename(index=get_parameter_rename_map())
 
@@ -170,36 +117,17 @@ def process_hioki_csv(uploaded_file) -> Optional[Tuple[pd.DataFrame, pd.DataFram
         return None
 
     # Process the main data table.
-=======
-    # --- KEY CHANGE: Detect wiring system ---
-    try:
-        wiring_system = params_df.loc['WIRING', 'Value']
-        st.sidebar.info(f"Detected Wiring System: **{wiring_system}**")
-    except KeyError:
-        st.sidebar.error("Could not determine wiring system from file.")
-        return None
-
->>>>>>> 8108238eccba4bb7f0ba7f412c9e03ca9b32ef10
     data_df = df_raw.iloc[header_row_index:].copy()
     data_df.columns = data_df.iloc[0]
     data_df = data_df.iloc[1:].reset_index(drop=True)
 
-<<<<<<< HEAD
     # Rename the data columns based on the detected wiring system.
     data_df = data_df.rename(columns=get_timeseries_rename_map(wiring_system))
-=======
-    # Data Cleaning
-    if len(data_df.columns) > 1:
-        cols_to_check = data_df.columns.drop('Date', errors='ignore')
-        data_df.replace(r'^\s*$', pd.NA, regex=True, inplace=True)
-        data_df.dropna(subset=cols_to_check, how='all', inplace=True)
->>>>>>> 8108238eccba4bb7f0ba7f412c9e03ca9b32ef10
 
     # --- Data Cleaning and Transformation ---
     # Create a proper Datetime column for time-series plotting.
     data_df['Datetime'] = pd.to_datetime(data_df['Date'] + ' ' + data_df['Etime'], errors='coerce')
     data_df = data_df.dropna(subset=['Datetime']).sort_values(by='Datetime').reset_index(drop=True)
-<<<<<<< HEAD
 
     # Convert all relevant columns to numbers for calculations.
     for col in data_df.columns:
@@ -217,18 +145,6 @@ def process_hioki_csv(uploaded_file) -> Optional[Tuple[pd.DataFrame, pd.DataFram
         data_df['Total Power Demand (kW)'] = 0  # Create a placeholder column.
 
     # Correct Power Factor for potential wiring reversal and convert power to kilo-units.
-=======
-    
-    numeric_cols = data_df.columns.drop(['Date', 'Etime', 'Status', 'Datetime'], errors='ignore')
-    for col in numeric_cols:
-        data_df[col] = pd.to_numeric(data_df[col], errors='coerce')
-        
-    # --- DYNAMIC RENAMING ---
-    rename_map = get_rename_map(wiring_system)
-    data_df = data_df.rename(columns=rename_map)
-    
-    # Post-processing Calculations (these now work universally)
->>>>>>> 8108238eccba4bb7f0ba7f412c9e03ca9b32ef10
     if 'Average Power Factor' in data_df.columns:
         data_df['Average Power Factor'] = data_df['Average Power Factor'].abs()
 
@@ -267,15 +183,7 @@ def get_gemini_analysis(summary_metrics, data_stats, params_info):
         return "Error: Gemini API key not found. Please add it to your Streamlit Secrets."
 
     api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
-<<<<<<< HEAD
     payload = {"contents": [{"parts": [{"text": user_prompt}]}],"systemInstruction": {"parts": [{"text": system_prompt}]}}
-=======
-    
-    payload = {
-        "contents": [{"parts": [{"text": user_prompt}]}],
-        "systemInstruction": {"parts": [{"text": system_prompt}]}
-    }
->>>>>>> 8108238eccba4bb7f0ba7f412c9e03ca9b32ef10
 
     try:
         response = requests.post(api_url, json=payload, timeout=120)
@@ -333,15 +241,9 @@ else:
         col1.metric("Measurement Duration", duration_str)
         col2.metric("Total Consumed Energy", f"{total_consumed_kwh:.2f} kWh")
         col3.metric("Average Power", f"{avg_power_kw:.2f} kW")
-<<<<<<< HEAD
         col4.metric("Peak Demand", f"{max_demand_kw:.2f} kW" if max_demand_kw > 0 else "N/A", help="The highest power draw, which can affect utility bills. 'N/A' if not measured.")
         col5.metric("Average Power Factor", f"{avg_pf:.3f}", delta=f"{avg_pf - 0.95:.3f}" if avg_pf < 0.95 else None, delta_color="inverse", help="Efficiency score (target > 0.95). A negative delta is bad.")
 
-=======
-        col4.metric("Peak Demand", f"{max_demand_kw:.2f} kW")
-        col5.metric("Average Power Factor", f"{avg_pf:.3f}", delta=f"{avg_pf - 0.95:.3f}" if avg_pf < 0.95 else None, delta_color="inverse", help="Target is > 0.95. A negative delta is bad.")
-        
->>>>>>> 8108238eccba4bb7f0ba7f412c9e03ca9b32ef10
         st.markdown("---")
 
         # --- AI Analysis Section ---
@@ -395,28 +297,7 @@ else:
             st.subheader("Measurement Settings")
             st.dataframe(parameters)
 
-<<<<<<< HEAD
         # --- Display AI Analysis at the bottom ---
-=======
-        with tab6:
-            st.subheader("Variable Explanations")
-            st.markdown("""
-| Hioki Variable Name | Plain English Name | Significance & Insight | How It Helps Reduce Consumption |
-| :--- | :--- | :--- | :--- |
-| **P1_Avg[W]** or **Psum_Avg[W]** | Average Real Power | The 'useful' power performing actual work (e.g., mixing dough). This is the component you want to use effectively. | **Quantify Waste:** Compare power draw during idle vs. active states to identify energy wasted by equipment not being shut down. |
-| **S1_Avg[VA]** or **Ssum_Avg[VA]**| Average Apparent Power | The total power your system must be able to handle, including both useful (Real) and wasted (Reactive) power. | **System Capacity:** Reducing this (by improving Power Factor) can free up electrical capacity, potentially avoiding costly transformer upgrades. |
-| **Q1_Avg[var]** or **Qsum_Avg[var]** | Average Reactive Power | The 'wasted' power required solely to create magnetic fields for motors to operate. It does no useful work. | **Pinpoint Inefficiency:** This is the primary target for Power Factor Correction. High reactive power indicates significant potential savings. |
-| **PF1_Avg** or **PFsum_Avg**| Average Power Factor | A direct score of electrical efficiency (Real Power / Apparent Power). 1.0 is perfect; < 0.95 is inefficient. | **Justify Investment:** Use this KPI to justify installing capacitor banks for Power Factor Correction, which directly eliminates utility penalties. |
-| **WP+1[Wh]** or **WP+sum[Wh]** | Consumed Real Energy | The cumulative total of energy used over time. This is the primary metric your electricity bill is based on. | **Track Savings:** This is the ultimate measure of success. Track this value before and after process changes to validate energy savings. |
-| **Pdem+1[W]** or **Pdem+sum[W]**| Power Demand (Consumed) | The average power usage over a short interval (e.g., 15 mins). Your utility bill's 'Demand Charge' is based on the highest peak. | **Reduce Peak Charges:** Identify when peaks occur and implement strategies like staggering machine start-ups to lower this value, directly cutting costs. |
-| **I1_Avg[A]** | Average Current | The flow of electricity. For a given task, higher current can indicate mechanical stress, friction, or overload. | **Predictive Maintenance:** Monitor current trends. A gradual increase at a constant speed often signals failing bearings or other issues that increase load. |
-| **WQLAG1[varh]** or **WQLAGsum[varh]** | Lagging Reactive Energy | The cumulative total of 'wasted' reactive power from motors. | **Size the Solution:** Use this value to accurately size the capacitor banks needed for a Power Factor Correction project. |
-| **U1_Avg[V]** | Average Voltage | The electrical potential supplied. Should be stable. | **Diagnose Supply Issues:** Significant voltage drops or instability can harm equipment and affect performance. This helps identify grid supply problems. |
-| **Freq_Avg[Hz]** | Average Frequency | The speed of the AC supply from the grid. Should be very stable (e.g., 50Hz or 60Hz). | **Verify Grid Quality:** Confirms the stability of the power being supplied to your factory. |
-            """)
-
-        # --- Display AI Analysis Section (Moved to the bottom) ---
->>>>>>> 8108238eccba4bb7f0ba7f412c9e03ca9b32ef10
         if 'ai_analysis' in st.session_state:
             st.markdown("---")
             st.header("🤖 AI-Powered Analysis")
