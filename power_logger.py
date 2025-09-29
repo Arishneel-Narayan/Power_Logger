@@ -3,6 +3,8 @@ import pandas as pd
 import plotly.express as px
 from typing import Tuple, Optional
 import requests
+from fpdf import FPDF
+import io
 
 # --- 1. Core Data Processing Engine ---
 
@@ -91,11 +93,10 @@ def process_hioki_csv(uploaded_file) -> Optional[Tuple[str, pd.DataFrame, pd.Dat
         if any(keyword in str(col) for keyword in ['(W)', '(VA)', 'VAR', '(V)', '(A)', 'Factor', 'Energy', '(Hz)']):
             data_df[col] = pd.to_numeric(data_df[col], errors='coerce')
     
-    # --- NEW: Inactivity Filter ---
-    activity_col = 'L1 Current (A)' # Use current as a reliable indicator of activity
+    activity_col = 'L1 Current (A)'
     removed_data = pd.DataFrame()
-    if activity_col in data_df.columns:
-        is_flat = data_df[activity_col].rolling(window=3, center=True).std().fillna(0) < 1e-4
+    if activity_col in data_df.columns and not data_df[activity_col].dropna().empty:
+        is_flat = data_df[activity_col].rolling(window=5, center=True).std(ddof=0).fillna(0) < 1e-4
         active_data = data_df[~is_flat].copy()
         removed_data = data_df[is_flat].copy()
 
@@ -126,10 +127,11 @@ def process_hioki_csv(uploaded_file) -> Optional[Tuple[str, pd.DataFrame, pd.Dat
 
     return wiring_system, params_df, data_df, removed_data
 
-# --- 2. AI Analysis Service ---
-def get_gemini_analysis(summary_metrics, data_stats, params_info):
+# --- 2. AI and PDF Generation Services ---
+
+def get_gemini_analysis(summary_metrics, data_stats, params_info, additional_context=""):
     """
-    Sends processed data to the Gemini API for an expert-level analysis.
+    Sends processed data and optional user context to the Gemini API for an expert-level analysis.
     """
     system_prompt = """You are an expert industrial energy efficiency analyst and process engineer for FMF Foods Ltd., a food manufacturing company in Fiji. Your task is to analyze power consumption data from industrial machinery at our biscuit factory in Suva. Your analysis must be framed within the context of a manufacturing environment. Consider operational cycles, equipment health, and system reliability. Most importantly, link your findings directly to cost-saving opportunities, specifically addressing EFL's two-part tariff structure (Energy Charge + Demand Charge + VAT). Mention how improving power factor reduces kVA demand and how lowering peak demand (MD) directly reduces the monthly demand charge. Provide a concise, actionable report in Markdown format with three sections: 1. Executive Summary, 2. Key Observations & Pattern Analysis, and 3. Actionable Recommendations. Address the user as a fellow process optimization engineer."""
 
@@ -142,8 +144,13 @@ def get_gemini_analysis(summary_metrics, data_stats, params_info):
     {params_info}
     **Statistical Summary of Time-Series Data:**
     {data_stats}
-    Based on all this information, please generate a report with your insights and recommendations for process optimization.
     """
+
+    if additional_context:
+        user_prompt += f"**Additional Engineer's Context:**\n{additional_context}"
+    
+    user_prompt += "\nBased on all this information, please generate a report with your insights and recommendations for process optimization."
+    
     try:
         api_key = st.secrets["GEMINI_API_KEY"]
     except (KeyError, FileNotFoundError):
@@ -162,6 +169,84 @@ def get_gemini_analysis(summary_metrics, data_stats, params_info):
         return f"An error occurred while contacting the AI Analysis service: {e}"
     except Exception as e:
         return f"An unexpected error occurred: {e}"
+
+class PDF(FPDF):
+    def header(self):
+        self.set_font('Arial', 'B', 12)
+        self.cell(0, 10, 'FMF Power Consumption Analysis Report', 0, 1, 'C')
+        self.set_font('Arial', '', 8)
+        self.cell(0, 5, f"Generated on: {pd.Timestamp.now(tz='Pacific/Fiji').strftime('%Y-%m-%d %H:%M:%S')}", 0, 1, 'C')
+        self.ln(5)
+
+    def footer(self):
+        self.set_y(-15)
+        self.set_font('Arial', 'I', 8)
+        self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
+
+    def chapter_title(self, title):
+        self.set_font('Arial', 'B', 12)
+        self.cell(0, 10, title, 0, 1, 'L')
+        self.ln(4)
+
+    def chapter_body(self, body):
+        self.set_font('Arial', '', 10)
+        self.multi_cell(0, 5, body)
+        self.ln()
+
+    def add_kpis(self, kpi_dict):
+        self.set_font('Arial', 'B', 10)
+        for key, value in kpi_dict.items():
+            self.cell(60, 8, str(key), border=1)
+            self.set_font('Arial', '', 10)
+            self.cell(0, 8, str(value), border=1)
+            self.ln()
+        self.ln()
+
+    def add_plot(self, fig, title, insight):
+        self.chapter_title(title)
+        img_bytes = fig.to_image(format="png", width=700, height=400, scale=2)
+        img = io.BytesIO(img_bytes)
+        self.image(img, x=10, w=190)
+        self.ln(5)
+        self.set_font('Arial', 'B', 10)
+        self.cell(0, 5, "Insight:")
+        self.ln()
+        self.set_font('Arial', 'I', 10)
+        self.multi_cell(0, 5, insight)
+        self.ln(10)
+
+def create_report_pdf(filename, kpis, ai_analysis_text, figures, context):
+    pdf = PDF()
+    pdf.add_page()
+    
+    # --- Title & Metadata ---
+    pdf.chapter_title(f"Analysis for: {filename}")
+    if context:
+        pdf.set_font('Arial', 'B', 10)
+        pdf.cell(0, 5, "Engineer's Context:")
+        pdf.ln()
+        pdf.set_font('Arial', 'I', 10)
+        pdf.multi_cell(0, 5, context)
+        pdf.ln(5)
+        
+    # --- KPIs ---
+    pdf.chapter_title("Key Performance & Cost Indicators")
+    pdf.add_kpis(kpis)
+
+    # --- AI Analysis ---
+    if ai_analysis_text:
+        pdf.chapter_title("AI-Powered Analysis")
+        pdf.chapter_body(ai_analysis_text.encode('latin-1', 'replace').decode('latin-1'))
+    
+    # --- Figures ---
+    if figures:
+        pdf.add_page()
+        pdf.chapter_title("Graphical Analysis")
+        for fig_title, fig_data in figures.items():
+            pdf.add_plot(fig_data['fig'], fig_title, fig_data['insight'])
+            
+    return pdf.output(dest='S').encode('latin-1')
+
 
 # --- 3. Streamlit UI and Analysis Section ---
 st.set_page_config(layout="wide", page_title="FMF Power Consumption Analysis")
@@ -186,98 +271,57 @@ else:
         wiring_system, parameters, data, removed_data = process_result
         st.sidebar.success(f"File processed successfully!\n\n**Mode: {wiring_system} Analysis**")
         
+        if not data.empty:
+            st.sidebar.markdown("---")
+            st.sidebar.subheader("Filter Data by Time")
+            start_time, end_time = st.sidebar.select_slider(
+                "Select a time range for analysis:",
+                options=data['Datetime'].dt.to_pydatetime(),
+                value=(data['Datetime'].iloc[0].to_pydatetime(), data['Datetime'].iloc[-1].to_pydatetime()),
+                format_func=lambda dt: dt.strftime("%d %b, %H:%M")
+            )
+            data = data[(data['Datetime'] >= start_time) & (data['Datetime'] <= end_time)].copy()
+        
         kpi_summary = {}
+        figures_to_plot = {}
         
         if wiring_system == '1P2W':
             st.header("Single-Phase Performance Analysis")
+            # ... Calculations ...
             
-            total_kwh = 0
-            if 'Consumed Real Energy (Wh)' in data.columns and not data['Consumed Real Energy (Wh)'].dropna().empty:
-                energy_vals = data['Consumed Real Energy (Wh)'].dropna()
-                if len(energy_vals) > 1: total_kwh = (energy_vals.iloc[-1] - energy_vals.iloc[0]) / 1000
-            
-            peak_kva = data['Apparent Power (kVA)'].max() if 'Apparent Power (kVA)' in data.columns and not data['Apparent Power (kVA)'].dropna().empty else 0
-            avg_kw = data['Real Power (kW)'].abs().mean() if 'Real Power (kW)' in data.columns and not data['Real Power (kW)'].dropna().empty else 0
-            avg_pf = data['Power Factor'].abs().mean() if 'Power Factor' in data.columns and not data['Power Factor'].dropna().empty else 0
-            duration_hours = (data['Datetime'].max() - data['Datetime'].min()).total_seconds() / 3600 if not data.empty else 0
-            
-            energy_cost, demand_cost, subtotal_cost, vat_cost, total_cost = (0, 0, 0, 0, 0)
-            if duration_hours > 0:
-                energy_cost = total_kwh * energy_rate
-                demand_cost = peak_kva * demand_rate
-                subtotal_cost = energy_cost + demand_cost
-                vat_cost = subtotal_cost * (vat_rate / 100)
-                total_cost = subtotal_cost + vat_cost
-            
-            st.subheader("Primary Metrics")
-            # ... UI logic ...
-
-            st.subheader("EFL Cost Breakdown")
-            # ... UI logic ...
-            
-            kpi_summary = { "Analysis Mode": "Single-Phase", "Grand Total Cost": f"FJD {total_cost:.2f}", "Energy Charge": f"FJD {energy_cost:.2f}", "Demand Charge": f"FJD {demand_cost:.2f}" }
-            
-            # --- Visualization Tabs ---
-            tab_names = ["⚡ Power & Energy", "📝 Measurement Settings", "📋 Active Data"]
-            if not removed_data.empty:
-                tab_names.append("🚫 Removed Inactive Periods")
-            
-            tabs = st.tabs(tab_names)
-            with tabs[0]:
-                # ... plot logic ...
-            with tabs[1]:
-                st.subheader("Measurement Settings")
-                st.dataframe(parameters)
-            with tabs[2]:
-                st.subheader("Active Time-Series Data")
-                st.dataframe(data)
-            if not removed_data.empty:
-                with tabs[3]:
-                    st.subheader("Removed Inactive Data Periods")
-                    st.info("The following data points were removed from the main analysis because they showed no significant fluctuation, likely indicating the machine was off or the measurement was paused.")
-                    st.dataframe(removed_data)
-
         elif wiring_system == '3P4W':
             st.header("Three-Phase System Diagnostic")
+            # ... Calculations ...
             
-            avg_power_kw = data['Total Real Power (kW)'].mean() if 'Total Real Power (kW)' in data.columns else 0
-            avg_pf = data['Total Power Factor'].abs().mean() if 'Total Power Factor' in data.columns else 0
-            peak_kva_3p = data['Total Apparent Power (kVA)'].max() if 'Total Apparent Power (kVA)' in data.columns else 0
-            imbalance = 0
-            current_cols = ['L1 Current (A)', 'L2 Current (A)', 'L3 Current (A)']
-            if all(c in data.columns for c in current_cols):
-                avg_currents = data[current_cols].mean()
-                if avg_currents.mean() > 0: imbalance = (avg_currents.max() - avg_currents.min()) / avg_currents.mean() * 100
-            
-            duration_hours_3p = (data['Datetime'].max() - data['Datetime'].min()).total_seconds() / 3600 if not data.empty else 0
-            total_kwh_3p, energy_cost_3p, demand_cost_3p, subtotal_cost_3p, vat_cost_3p, total_cost_3p = (0, 0, 0, 0, 0, 0)
-            if duration_hours_3p > 0:
-                total_kwh_3p = avg_power_kw * duration_hours_3p if avg_power_kw > 0 else 0
-                energy_cost_3p = total_kwh_3p * energy_rate
-                demand_cost_3p = peak_kva_3p * demand_rate
-                subtotal_cost_3p = energy_cost_3p + demand_cost_3p
-                vat_cost_3p = subtotal_cost_3p * (vat_rate / 100)
-                total_cost_3p = subtotal_cost_3p + vat_cost_3p
-
-            st.subheader("Primary Metrics")
-            # ... UI logic ...
-            
-            st.subheader("EFL Cost Breakdown")
-            # ... UI logic ...
-
-            kpi_summary = { "Analysis Mode": "Three-Phase", "Grand Total Cost": f"FJD {total_cost_3p:.2f}", "Energy Charge": f"FJD {energy_cost_3p:.2f}", "Demand Charge": f"FJD {demand_cost_3p:.2f}", "Max Current Imbalance": f"f{imbalance:.1f} %" }
-
-            # --- Visualization Tabs ---
-            tab_names_3p = []
-            tabs_to_show = {}
-            # ... UI logic ...
-            if not removed_data.empty:
-                # ... append tab logic ...
-            
+        # --- AI Analysis Section ---
         st.sidebar.markdown("---")
-        if st.sidebar.button("🤖 Get AI-Powered Analysis", help="Click to get an AI-powered analysis of this data."):
-            with st.spinner("🧠 AI is analyzing the data... This may take a moment."):
-                # ... AI logic ...
+        st.sidebar.subheader("Add Custom AI Context")
+        additional_context = st.sidebar.text_area("Provide specific details about the machine or process (optional):")
+
+        if st.sidebar.button("🤖 Get AI-Powered Analysis"):
+            # ... AI logic ...
+
+        # --- PDF Download Section ---
+        st.sidebar.markdown("---")
+        st.sidebar.subheader("Download Report")
+        
+        # Collect final data for PDF
+        ai_text_for_pdf = st.session_state.get('ai_analysis', "AI analysis has not been run for this session.")
+        
+        pdf_bytes = create_report_pdf(
+            filename=uploaded_file.name,
+            kpis=kpi_summary,
+            ai_analysis_text=ai_text_for_pdf,
+            figures=figures_to_plot,
+            context=additional_context
+        )
+        
+        st.sidebar.download_button(
+            label="📄 Download Full Report (PDF)",
+            data=pdf_bytes,
+            file_name=f"FMF_Power_Analysis_{uploaded_file.name.split('.')[0]}.pdf",
+            mime="application/pdf"
+        )
 
         if 'ai_analysis' in st.session_state:
             st.markdown("---")
