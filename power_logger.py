@@ -146,11 +146,11 @@ def process_hioki_csv(uploaded_file) -> Optional[Tuple[str, pd.DataFrame, pd.Dat
 # --- 2. AI and Cost Calculation Services ---
 
 def get_gemini_analysis(summary_metrics, data_stats, params_info, additional_context=""):
-    system_prompt = """You are an expert industrial energy efficiency analyst and process engineer for FMF Foods Ltd., a food manufacturing company in Fiji. Your task is to analyze power consumption data from industrial machinery at our biscuit factory in Suva. Your analysis must be framed within the context of a manufacturing environment. Consider operational cycles, equipment health, and system reliability. Most importantly, link your findings directly to cost-saving opportunities, specifically addressing EFL's complex tariff structure (tiered energy, demand charges, excess reactive power, and VAT). Mention how improving power factor reduces kVARh and how lowering peak demand (MD) directly reduces the monthly demand charge. Provide a concise, actionable report in Markdown format with three sections: 1. Executive Summary, 2. Key Observations & Pattern Analysis, and 3. Actionable Recommendations. Address the user as a fellow process optimization engineer."""
+    system_prompt = """You are an expert industrial energy efficiency analyst and process engineer for FMF Foods Ltd., a food manufacturing company in Fiji. Your task is to analyze power consumption data from industrial machinery at our biscuit factory in Suva. Your analysis must be framed within the context of a manufacturing environment. Consider operational cycles, equipment health, and system reliability. Most importantly, link your findings directly to cost-saving opportunities by focusing on reducing peak demand (MD) and improving power factor. Provide a concise, actionable report in Markdown format with three sections: 1. Executive Summary, 2. Key Observations & Pattern Analysis, and 3. Actionable Recommendations. Address the user as a fellow process optimization engineer."""
     user_prompt = f"""
-    Good morning, Please analyze the following power consumption data for an industrial machine at our Suva facility, keeping in mind our electricity costs are based on EFL's complex Maximum Demand tariff structure.
+    Good morning, Please analyze the following power consumption data for an industrial machine at our Suva facility.
 
-    **Key Financial & Performance Indicators:**
+    **Key Performance Indicators:**
     {summary_metrics}
     **Measurement Parameters:**
     {params_info}
@@ -179,50 +179,6 @@ def get_gemini_analysis(summary_metrics, data_stats, params_info, additional_con
     except Exception as e:
         return f"An unexpected error occurred: {e}"
 
-def calculate_efl_bill(band: str, total_kwh: float, peak_kw: float, total_kvarh: float, duration_hours: float) -> Dict:
-    """Calculates an estimated EFL bill based on the selected demand band."""
-    
-    VAT_RATE = 0.125
-    REACTIVE_RATE = 0.4295
-
-    energy_charge, demand_charge, reactive_charge = 0, 0, 0
-
-    # --- Energy Charge Calculation ---
-    if band == "Small Business (<75kW)":
-        projected_monthly_kwh = (total_kwh / duration_hours) * 730 if duration_hours > 0 else 0
-        if projected_monthly_kwh <= 14999:
-            energy_charge = total_kwh * 0.4099
-        else:
-            # For simplicity in this short-term analysis, we apply the higher rate to all consumption
-            # as it's likely representative of the monthly pattern.
-            energy_charge = total_kwh * 0.4295
-    elif band == "Medium (75-500kW)":
-        energy_charge = total_kwh * 0.2781
-        demand_charge = peak_kw * 35.33
-    elif band == "Large (500-1000kW)":
-        energy_charge = total_kwh * 0.3026
-        demand_charge = peak_kw * 37.57
-    elif band == "Extra Large (>1000kW)":
-        energy_charge = total_kwh * 0.3270
-        demand_charge = peak_kw * 39.24
-
-    # --- Reactive Charge Calculation ---
-    allowed_kvarh = 0.62 * total_kwh
-    excess_kvarh = max(0, total_kvarh - allowed_kvarh)
-    reactive_charge = excess_kvarh * REACTIVE_RATE
-
-    # --- Final Bill Calculation ---
-    subtotal = energy_charge + demand_charge + reactive_charge
-    vat_amount = subtotal * VAT_RATE
-    grand_total = subtotal + vat_amount
-
-    return {
-        "Energy Charge": energy_charge, "Demand Charge": demand_charge,
-        "Reactive Charge": reactive_charge, "Subtotal": subtotal,
-        "VAT Amount": vat_amount, "Grand Total": grand_total
-    }
-
-
 # --- 3. Streamlit UI and Analysis Section ---
 st.set_page_config(layout="wide", page_title="FMF Power Consumption Analysis")
 st.title("⚡ FMF Power Consumption Analysis Dashboard")
@@ -243,32 +199,6 @@ else:
         data = data_full.copy()
 
         if not data.empty:
-            # --- Sidebar UI ---
-            st.sidebar.markdown("---")
-            st.sidebar.subheader("EFL Tariff Structure")
-            
-            # --- Auto-detect Demand Band ---
-            peak_kw_for_band_detection = 0
-            if wiring_system == '1P2W' and 'Avg Real Power (kW)' in data.columns:
-                peak_kw_for_band_detection = data['Avg Real Power (kW)'].max()
-            elif wiring_system == '3P4W' and 'Total Avg Real Power (kW)' in data.columns:
-                peak_kw_for_band_detection = data['Total Avg Real Power (kW)'].max()
-            
-            demand_bands = ["Small Business (<75kW)", "Medium (75-500kW)", "Large (500-1000kW)", "Extra Large (>1000kW)"]
-            default_band_index = 0
-            if 75 <= peak_kw_for_band_detection < 500:
-                default_band_index = 1
-            elif 500 <= peak_kw_for_band_detection < 1000:
-                default_band_index = 2
-            elif peak_kw_for_band_detection >= 1000:
-                default_band_index = 3
-
-            demand_band = st.sidebar.selectbox(
-                "Select Demand Band:", options=demand_bands, index=default_band_index,
-                help="Automatically suggested based on the peak kW in your data. You can override it to model different scenarios."
-            )
-            st.sidebar.caption(f"VAT is fixed at 12.5%")
-
             # --- Date/Time Filter ---
             st.sidebar.markdown("---")
             st.sidebar.subheader("Filter Data by Time")
@@ -282,70 +212,143 @@ else:
             data = data[(data['Datetime'] >= start_time) & (data['Datetime'] <= end_time)].copy()
         
         kpi_summary = {}
+        figures_to_plot = {}
         
         if wiring_system == '1P2W':
             st.header("Single-Phase Performance Analysis")
             
-            total_kwh, peak_kw, total_kvarh = 0, 0, 0
-            duration_hours = (data['Datetime'].max() - data['Datetime'].min()).total_seconds() / 3600 if not data.empty else 0
-            
-            if 'Consumed Real Energy (Wh)' in data.columns and not data['Consumed Real Energy (Wh)'].dropna().empty:
-                energy_vals = data['Consumed Real Energy (Wh)'].dropna()
+            total_kwh = 0
+            energy_col = 'Consumed Real Energy (Wh)'
+            if energy_col in data.columns and not data[energy_col].dropna().empty:
+                energy_vals = data[energy_col].dropna()
                 if len(energy_vals) > 1: total_kwh = (energy_vals.iloc[-1] - energy_vals.iloc[0]) / 1000
             
-            if 'Avg Real Power (kW)' in data.columns: peak_kw = data['Avg Real Power (kW)'].max()
+            peak_kva = data['Avg Apparent Power (kVA)'].max() if 'Avg Apparent Power (kVA)' in data.columns else 0
+            avg_kw = data['Avg Real Power (kW)'].abs().mean() if 'Avg Real Power (kW)' in data.columns else 0
+            avg_pf = data['Power Factor'].abs().mean() if 'Power Factor' in data.columns else 0
             
-            if 'Lagging Reactive Energy (kVARh)' in data.columns:
-                kvarh_vals = data['Lagging Reactive Energy (kVARh)'].dropna()
-                if len(kvarh_vals) > 1: total_kvarh = (kvarh_vals.iloc[-1] - kvarh_vals.iloc[0])
+            st.subheader("Performance Metrics")
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("Total Consumed Energy", f"{total_kwh:.2f} kWh" if total_kwh > 0 else "N/A")
+            col2.metric("Peak Demand (MD)", f"{peak_kva:.2f} kVA" if peak_kva > 0 else "N/A")
+            col3.metric("Average Power Draw", f"{avg_kw:.2f} kW" if avg_kw > 0 else "N/A")
+            col4.metric("Average Power Factor", f"{avg_pf:.3f}" if avg_pf > 0 else "N/A")
 
-            bill_details = calculate_efl_bill(demand_band, total_kwh, peak_kw, total_kvarh, duration_hours)
+            kpi_summary = { 
+                "Analysis Mode": "Single-Phase", "Total Consumed Energy": f"{total_kwh:.2f} kWh",
+                "Peak Demand (MD)": f"{peak_kva:.2f} kVA", "Average Power Draw": f"{avg_kw:.2f} kW",
+                "Average Power Factor": f"{avg_pf:.3f}"
+            }
+            
+            # --- Visualization Tabs ---
+            tab_names = ["⚡ Power & Energy", "📝 Measurement Settings", "📋 Active Data"]
+            if not removed_data.empty:
+                tab_names.append("🚫 Removed Inactive Periods")
+            
+            tabs = st.tabs(tab_names)
+            with tabs[0]:
+                plot_cols = [col for col in ['Avg Real Power (kW)', 'Avg Apparent Power (kVA)', 'Avg Reactive Power (kVAR)'] if col in data.columns]
+                if plot_cols:
+                    st.subheader("Power Consumption Over Time")
+                    fig_power = px.line(data, x='Datetime', y=plot_cols)
+                    st.plotly_chart(fig_power, use_container_width=True)
+                if 'Power Factor' in data.columns:
+                    st.subheader("Power Factor Over Time")
+                    fig_pf = px.line(data, x='Datetime', y='Power Factor')
+                    fig_pf.add_hline(y=0.95, line_dash="dash", line_color="red")
+                    st.plotly_chart(fig_pf, use_container_width=True)
 
-            st.subheader("EFL Bill Estimate")
-            cost_help_text = f"For the {duration_hours:.1f} hour measurement period."
-            c1, c2, c3, c4, c5 = st.columns(5)
-            c1.metric("Energy Charge", f"FJD {bill_details['Energy Charge']:.2f}", help=cost_help_text)
-            c2.metric("Demand Charge", f"FJD {bill_details['Demand Charge']:.2f}", help="Monthly charge based on this period's peak.")
-            c3.metric("Reactive Charge", f"FJD {bill_details['Reactive Charge']:.2f}", help=cost_help_text)
-            c4.metric("Subtotal", f"FJD {bill_details['Subtotal']:.2f}", help=cost_help_text)
-            c5.metric("Grand Total (inc. VAT)", f"FJD {bill_details['Grand Total']:.2f}", help=cost_help_text)
-            
-            kpi_summary = bill_details
-            kpi_summary['Peak kW'] = f"{peak_kw:.2f}"
-            
+            with tabs[1]:
+                st.subheader("Measurement Settings")
+                st.dataframe(parameters)
+            with tabs[2]:
+                st.subheader("Active Time-Series Data")
+                st.dataframe(data)
+            if not removed_data.empty:
+                with tabs[3]:
+                    st.subheader("Removed Inactive Data Periods")
+                    st.info("The following data points were removed from the main analysis because they showed no significant fluctuation, likely indicating the machine was off or the measurement was paused.")
+                    st.dataframe(removed_data)
+
         elif wiring_system == '3P4W':
             st.header("Three-Phase System Diagnostic")
             
             avg_power_kw = data['Total Avg Real Power (kW)'].mean() if 'Total Avg Real Power (kW)' in data.columns else 0
-            peak_kw = data['Total Avg Real Power (kW)'].max() if 'Total Avg Real Power (kW)' in data.columns else 0
-            duration_hours = (data['Datetime'].max() - data['Datetime'].min()).total_seconds() / 3600 if not data.empty else 0
-            total_kwh = avg_power_kw * duration_hours if duration_hours > 0 else 0
+            avg_pf = data['Total Power Factor'].abs().mean() if 'Total Power Factor' in data.columns else 0
+            peak_kva_3p = data['Total Avg Apparent Power (kVA)'].max() if 'Total Avg Apparent Power (kVA)' in data.columns else 0
+            imbalance = 0
+            current_cols = ['L1 Avg Current (A)', 'L2 Avg Current (A)', 'L3 Avg Current (A)']
+            if all(c in data.columns for c in current_cols):
+                avg_currents = data[current_cols].mean()
+                if avg_currents.mean() > 0: imbalance = (avg_currents.max() - avg_currents.min()) / avg_currents.mean() * 100
             
-            avg_kvar = data['Total Avg Reactive Power (kVAR)'].mean() if 'Total Avg Reactive Power (kVAR)' in data.columns else 0
-            total_kvarh = avg_kvar * duration_hours if duration_hours > 0 else 0
+            st.subheader("Performance Metrics")
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("Average Total Power", f"{avg_power_kw:.2f} kW" if avg_power_kw > 0 else "N/A")
+            col2.metric("Peak Demand (MD)", f"{peak_kva_3p:.2f} kVA" if peak_kva_3p > 0 else "N/A")
+            col3.metric("Average Total Power Factor", f"{avg_pf:.3f}" if avg_pf > 0 else "N/A")
+            col4.metric("Max Current Imbalance", f"{imbalance:.1f} %" if imbalance > 0 else "N/A", help="Under 5% is good.")
 
-            bill_details = calculate_efl_bill(demand_band, total_kwh, peak_kw, total_kvarh, duration_hours)
+            kpi_summary = { 
+                "Analysis Mode": "Three-Phase", "Average Total Power": f"{avg_power_kw:.2f} kW",
+                "Peak Demand (MD)": f"{peak_kva_3p:.2f} kVA", "Average Total Power Factor": f"{avg_pf:.3f}",
+                "Max Current Imbalance": f"{imbalance:.1f} %"
+            }
             
-            st.subheader("EFL Bill Estimate")
-            cost_help_text_3p = f"For the {duration_hours:.1f} hour measurement period."
-            c1, c2, c3, c4, c5 = st.columns(5)
-            c1.metric("Energy Charge", f"FJD {bill_details['Energy Charge']:.2f}", help=cost_help_text_3p)
-            c2.metric("Demand Charge", f"FJD {bill_details['Demand Charge']:.2f}", help="Monthly charge based on this period's peak.")
-            c3.metric("Reactive Charge", f"FJD {bill_details['Reactive Charge']:.2f}", help=cost_help_text_3p)
-            c4.metric("Subtotal", f"FJD {bill_details['Subtotal']:.2f}", help=cost_help_text_3p)
-            c5.metric("Grand Total (inc. VAT)", f"FJD {bill_details['Grand Total']:.2f}", help=cost_help_text_3p)
+            # --- Visualization Tabs ---
+            tab_names_3p = []
+            tabs_to_show = {}
+            if all(c in data.columns for c in current_cols): tabs_to_show["📊 Load Balance"] = True
+            if all(c in data.columns for c in ['L1 Avg Voltage (V)', 'L2 Avg Voltage (V)', 'L3 Avg Voltage (V)']): tabs_to_show["🩺 Voltage Health"] = True
+            if all(c in data.columns for c in ['L1 Power Factor', 'L2 Power Factor', 'L3 Power Factor']): tabs_to_show["⚖️ Power Factor"] = True
+            
+            if tabs_to_show:
+                tab_names_3p.extend(list(tabs_to_show.keys()))
+            tab_names_3p.extend(["📝 Settings", "📋 Filtered Active Data"])
+            if not removed_data.empty:
+                tab_names_3p.append("🚫 Removed Inactive Periods")
+            
+            tabs = st.tabs(tab_names_3p)
+            current_tab = 0
+            if "📊 Load Balance" in tabs_to_show:
+                with tabs[current_tab]:
+                    st.subheader("Current Load Balance Across Phases")
+                    fig_balance = px.line(data, x='Datetime', y=current_cols, color_discrete_map={'L1 Avg Current (A)': 'red', 'L2 Avg Current (A)': 'blue', 'L3 Avg Current (A)': 'green'})
+                    st.plotly_chart(fig_balance, use_container_width=True)
+                current_tab += 1
+            if "🩺 Voltage Health" in tabs_to_show:
+                with tabs[current_tab]:
+                    st.subheader("Voltage Stability Across Phases")
+                    voltage_cols = ['L1 Avg Voltage (V)', 'L2 Avg Voltage (V)', 'L3 Avg Voltage (V)']
+                    fig_voltage = px.line(data, x='Datetime', y=voltage_cols, color_discrete_map={voltage_cols[0]: 'red', voltage_cols[1]: 'blue', voltage_cols[2]: 'green'})
+                    st.plotly_chart(fig_voltage, use_container_width=True)
+                current_tab += 1
+            if "⚖️ Power Factor" in tabs_to_show:
+                with tabs[current_tab]:
+                    st.subheader("Power Factor Per Phase")
+                    pf_cols = ['L1 Power Factor', 'L2 Power Factor', 'L3 Power Factor']
+                    fig_pf_3p = px.line(data, x='Datetime', y=pf_cols, color_discrete_map={pf_cols[0]: 'red', pf_cols[1]: 'blue', pf_cols[2]: 'green'})
+                    st.plotly_chart(fig_pf_3p, use_container_width=True)
+                current_tab += 1
+            with tabs[current_tab]:
+                st.subheader("Measurement Settings")
+                st.dataframe(parameters)
+            with tabs[current_tab+1]:
+                st.subheader("Filtered Active Time-Series Data")
+                st.dataframe(data)
+            if not removed_data.empty:
+                with tabs[current_tab+2]:
+                    st.subheader("Removed Inactive Data Periods")
+                    st.dataframe(removed_data)
 
-            kpi_summary = bill_details
-            kpi_summary['Peak kW'] = f"{peak_kw:.2f}"
-            
-        # --- Common UI elements (AI, etc.) ---
+        # --- AI Analysis Section ---
         st.sidebar.markdown("---")
         st.sidebar.subheader("Add Custom AI Context")
         additional_context = st.sidebar.text_area("Provide specific details about the machine or process (optional):")
 
         if st.sidebar.button("🤖 Get AI-Powered Analysis"):
             with st.spinner("🧠 AI is analyzing the data... This may take a moment."):
-                summary_metrics_text = "\n".join([f"- {key}: {value}" for key, value in kpi_summary.items()])
+                summary_metrics_text = "\n".join([f"- {key}: {value}" for key, value in kpi_summary.items() if "N/A" not in str(value)])
                 stats_cols = [col for col in data.columns if data[col].dtype in ['float64', 'int64']]
                 data_stats_text = data[stats_cols].describe().to_string() if stats_cols else "No numeric data for statistics."
                 params_info_text = parameters.to_string()
