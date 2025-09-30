@@ -199,7 +199,6 @@ else:
         data = data_full.copy()
 
         if not data.empty:
-            # --- Date/Time Filter ---
             st.sidebar.markdown("---")
             st.sidebar.subheader("Filter Data by Time")
             dt_options = data['Datetime'].dt.to_pydatetime()
@@ -240,7 +239,6 @@ else:
                 "Average Power Factor": f"{avg_pf:.3f}"
             }
             
-            # --- Visualization Tabs ---
             tab_names = ["⚡ Power & Energy", "📝 Measurement Settings", "📋 Active Data"]
             if not removed_data.empty:
                 tab_names.append("🚫 Removed Inactive Periods")
@@ -295,7 +293,6 @@ else:
                 "Max Current Imbalance": f"{imbalance:.1f} %"
             }
             
-            # --- Visualization Tabs ---
             tab_names_3p = []
             tabs_to_show = {}
             if all(c in data.columns for c in current_cols): tabs_to_show["📊 Load Balance"] = True
