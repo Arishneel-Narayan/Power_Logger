@@ -211,7 +211,6 @@ else:
             data = data[(data['Datetime'] >= start_time) & (data['Datetime'] <= end_time)].copy()
         
         kpi_summary = {}
-        figures_to_plot = {}
         
         if wiring_system == '1P2W':
             st.header("Single-Phase Performance Analysis")
@@ -250,11 +249,24 @@ else:
                     st.subheader("Power Consumption Over Time")
                     fig_power = px.line(data, x='Datetime', y=plot_cols)
                     st.plotly_chart(fig_power, use_container_width=True)
+                    with st.expander("Show Key Power Statistics"):
+                        stats_data = {
+                            "Max Real Power": f"{data['Avg Real Power (kW)'].max():.2f} kW" if 'Avg Real Power (kW)' in data else "N/A",
+                            "Max Apparent Power": f"{data['Avg Apparent Power (kVA)'].max():.2f} kVA" if 'Avg Apparent Power (kVA)' in data else "N/A"
+                        }
+                        st.json(stats_data)
+
                 if 'Power Factor' in data.columns:
                     st.subheader("Power Factor Over Time")
                     fig_pf = px.line(data, x='Datetime', y='Power Factor')
                     fig_pf.add_hline(y=0.95, line_dash="dash", line_color="red")
                     st.plotly_chart(fig_pf, use_container_width=True)
+                    with st.expander("Show Power Factor Statistics"):
+                        stats_pf = {
+                            "Minimum Power Factor": f"{data['Power Factor'].min():.3f}",
+                            "Average Power Factor": f"{data['Power Factor'].mean():.3f}"
+                        }
+                        st.json(stats_pf)
 
             with tabs[1]:
                 st.subheader("Measurement Settings")
@@ -312,6 +324,8 @@ else:
                     st.subheader("Current Load Balance Across Phases")
                     fig_balance = px.line(data, x='Datetime', y=current_cols, color_discrete_map={'L1 Avg Current (A)': 'red', 'L2 Avg Current (A)': 'blue', 'L3 Avg Current (A)': 'green'})
                     st.plotly_chart(fig_balance, use_container_width=True)
+                    with st.expander("Show Current Statistics"):
+                        st.dataframe(data[current_cols].describe().T[['mean', 'min', 'max']].rename(columns={'mean':'Average', 'min':'Minimum', 'max':'Maximum'}))
                 current_tab += 1
             if "🩺 Voltage Health" in tabs_to_show:
                 with tabs[current_tab]:
@@ -319,6 +333,8 @@ else:
                     voltage_cols = ['L1 Avg Voltage (V)', 'L2 Avg Voltage (V)', 'L3 Avg Voltage (V)']
                     fig_voltage = px.line(data, x='Datetime', y=voltage_cols, color_discrete_map={voltage_cols[0]: 'red', voltage_cols[1]: 'blue', voltage_cols[2]: 'green'})
                     st.plotly_chart(fig_voltage, use_container_width=True)
+                    with st.expander("Show Voltage Statistics"):
+                        st.dataframe(data[voltage_cols].describe().T[['mean', 'min', 'max']].rename(columns={'mean':'Average', 'min':'Minimum', 'max':'Maximum'}))
                 current_tab += 1
             if "⚖️ Power Factor" in tabs_to_show:
                 with tabs[current_tab]:
@@ -326,6 +342,8 @@ else:
                     pf_cols = ['L1 Power Factor', 'L2 Power Factor', 'L3 Power Factor']
                     fig_pf_3p = px.line(data, x='Datetime', y=pf_cols, color_discrete_map={pf_cols[0]: 'red', pf_cols[1]: 'blue', pf_cols[2]: 'green'})
                     st.plotly_chart(fig_pf_3p, use_container_width=True)
+                    with st.expander("Show Power Factor Statistics"):
+                        st.dataframe(data[pf_cols].describe().T[['mean', 'min', 'max']].rename(columns={'mean':'Average', 'min':'Minimum', 'max':'Maximum'}))
                 current_tab += 1
             with tabs[current_tab]:
                 st.subheader("Measurement Settings")
@@ -338,7 +356,6 @@ else:
                     st.subheader("Removed Inactive Data Periods")
                     st.dataframe(removed_data)
 
-        # --- AI Analysis Section ---
         st.sidebar.markdown("---")
         st.sidebar.subheader("Add Custom AI Context")
         additional_context = st.sidebar.text_area("Provide specific details about the machine or process (optional):")
