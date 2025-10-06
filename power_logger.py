@@ -120,7 +120,8 @@ def process_hioki_csv(uploaded_file) -> Optional[Tuple[str, pd.DataFrame, pd.Dat
         power_cols = ['L1 Avg Real Power (W)', 'L2 Avg Real Power (W)', 'L3 Avg Real Power (W)']
         if all(c in data_df.columns for c in power_cols) and 'Total Avg Real Power (W)' not in data_df.columns:
             st.sidebar.info("Calculating Total Power from phase data.")
-            data_df['Total Avg Real Power (W)'] = data_df[power_cols].sum(axis=1)
+            # CORRECTED LOGIC: Sum the absolute power of each phase to handle polarity errors
+            data_df['Total Avg Real Power (W)'] = data_df[power_cols].abs().sum(axis=1)
 
             apparent_cols = ['L1 Avg Apparent Power (VA)', 'L2 Avg Apparent Power (VA)', 'L3 Avg Apparent Power (VA)']
             if all(c in data_df.columns for c in apparent_cols):
@@ -132,7 +133,7 @@ def process_hioki_csv(uploaded_file) -> Optional[Tuple[str, pd.DataFrame, pd.Dat
 
             if 'Total Avg Real Power (W)' in data_df.columns and 'Total Avg Apparent Power (VA)' in data_df.columns:
                 data_df['Total Power Factor'] = data_df.apply(
-                    lambda row: row['Total Avg Real Power (W)'] / row['Total Avg Apparent Power (VA)'] if row['Total Avg Apparent Power (VA)'] != 0 else 0,
+                    lambda row: row['Total Avg Real Power (W)'] / row['Total Avg Apparent Power (VA)'] if row['Total Avg Apparent Power (VA)'] > 0 else 0,
                     axis=1
                 )
 
@@ -295,7 +296,7 @@ else:
         elif wiring_system == '3P4W':
             st.header("Three-Phase System Diagnostic")
 
-            avg_power_kw = data['Total Avg Real Power (kW)'].abs().mean() if 'Total Avg Real Power (kW)' in data.columns else 0
+            avg_power_kw = data['Total Avg Real Power (kW)'].mean() if 'Total Avg Real Power (kW)' in data.columns else 0
             avg_pf = data['Total Power Factor'].abs().mean() if 'Total Power Factor' in data.columns else 0
             peak_kva_3p = data['Total Avg Apparent Power (kVA)'].max() if 'Total Avg Apparent Power (kVA)' in data.columns else 0
             imbalance = 0
@@ -382,3 +383,4 @@ else:
 
     elif uploaded_file is not None:
         st.warning("Could not process the uploaded file. Please ensure it is a valid, non-empty Hioki CSV export.")
+
