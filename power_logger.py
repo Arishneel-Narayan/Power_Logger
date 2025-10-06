@@ -249,6 +249,15 @@ else:
             peak_kva = data['Avg Apparent Power (kVA)'].max() if 'Avg Apparent Power (kVA)' in data.columns else 0
             avg_kw = data['Avg Real Power (kW)'].abs().mean() if 'Avg Real Power (kW)' in data.columns else 0
             avg_pf = data['Power Factor'].abs().mean() if 'Power Factor' in data.columns else 0
+            
+            # --- NEW: Calculate operational metrics before UI tabs for AI prompt ---
+            duration_hours, kwh_per_hour, load_factor = 0, 0, 0
+            if not data.empty and len(data) > 1:
+                duration = data['Datetime'].iloc[-1] - data['Datetime'].iloc[0]
+                duration_hours = duration.total_seconds() / 3600
+                kwh_per_hour = total_kwh / duration_hours if duration_hours > 0 else 0
+                peak_kw = data['Avg Real Power (kW)'].abs().max() if 'Avg Real Power (kW)' in data.columns else 0
+                load_factor = avg_kw / peak_kw if peak_kw > 0 else 0
 
             st.subheader("Performance Metrics")
             col1, col2, col3, col4 = st.columns(4)
@@ -258,12 +267,17 @@ else:
             col4.metric("Average Power Factor", f"{avg_pf:.3f}" if avg_pf > 0 else "N/A")
 
             kpi_summary = {
-                "Analysis Mode": "Single-Phase", "Total Consumed Energy": f"{total_kwh:.2f} kWh",
-                "Peak Demand (MD)": f"{peak_kva:.2f} kVA", "Average Power Draw": f"{avg_kw:.2f} kW",
-                "Average Power Factor": f"{avg_pf:.3f}"
+                "Analysis Mode": "Single-Phase",
+                "Total Consumed Energy": f"{total_kwh:.2f} kWh",
+                "Peak Demand (MD)": f"{peak_kva:.2f} kVA",
+                "Average Power Draw": f"{avg_kw:.2f} kW",
+                "Average Power Factor": f"{avg_pf:.3f}",
+                "Operating Duration": f"{duration_hours:.2f} hours",
+                "Average Hourly Consumption": f"{kwh_per_hour:.2f} kWh/hr",
+                "Load Factor": f"{load_factor:.2f}"
             }
 
-            tab_names = ["⚡ Power & Energy", "📝 Measurement Settings", "📋 Active Data"]
+            tab_names = ["⚡ Power & Energy", "📈 Key Metrics", "📝 Measurement Settings", "📋 Active Data"]
             if not removed_data.empty:
                 tab_names.append("🚫 Removed Inactive Periods")
 
@@ -280,15 +294,40 @@ else:
                     fig_pf = px.line(data, x='Datetime', y='Power Factor', title="Power Factor vs. Time")
                     fig_pf.add_hline(y=0.95, line_dash="dash", line_color="red", annotation_text="Target PF")
                     st.plotly_chart(fig_pf, use_container_width=True)
-
+            
             with tabs[1]:
+                st.subheader("Operational Key Metrics & Cost Estimation")
+                if duration_hours > 0:
+                    col1, col2, col3 = st.columns(3)
+                    col1.metric("Operating Duration", f"{duration_hours:.2f} hours")
+                    col2.metric("Avg. Hourly Consumption", f"{kwh_per_hour:.2f} kWh/hr")
+                    col3.metric("Load Factor", f"{load_factor:.2f}", help="Ratio of average load to peak load. A higher value indicates more consistent power use.")
+
+                    with st.expander("Estimate Operating Cost"):
+                        st.info("Enter your current EFL tariff rates below to estimate costs for this period.")
+                        cost_per_kwh = st.number_input("Cost per kWh ($)", value=0.40, step=0.01, format="%.2f", key="cost_kwh_1p")
+                        cost_per_kva_md = st.number_input("Peak Demand Charge per kVA ($)", value=18.00, step=0.50, format="%.2f", key="cost_kva_1p")
+
+                        total_energy_cost = total_kwh * cost_per_kwh
+                        total_demand_cost = peak_kva * cost_per_kva_md
+                        total_cost = total_energy_cost + total_demand_cost
+
+                        st.markdown("---")
+                        cost_col1, cost_col2, cost_col3 = st.columns(3)
+                        cost_col1.metric("Energy Cost", f"${total_energy_cost:,.2f}")
+                        cost_col2.metric("Demand Cost", f"${total_demand_cost:,.2f}")
+                        cost_col3.metric("Total Estimated Cost", f"${total_cost:,.2f}")
+                else:
+                    st.info("Not enough data in the selected range to calculate operational metrics.")
+
+            with tabs[2]:
                 st.subheader("Measurement Settings")
                 st.dataframe(parameters)
-            with tabs[2]:
+            with tabs[3]:
                 st.subheader("Active Time-Series Data")
                 st.dataframe(data)
             if not removed_data.empty:
-                with tabs[3]:
+                with tabs[4]:
                     st.subheader("Removed Inactive Data Periods")
                     st.info("The following data points were removed from the main analysis because they showed no significant fluctuation, likely indicating the machine was off or the measurement was paused.")
                     st.dataframe(removed_data)
@@ -304,6 +343,20 @@ else:
             if all(c in data.columns for c in current_cols):
                 avg_currents = data[current_cols].mean()
                 if avg_currents.mean() > 0: imbalance = (avg_currents.max() - avg_currents.min()) / avg_currents.mean() * 100
+            
+            # --- NEW: Calculate operational metrics before UI tabs for AI prompt ---
+            duration_hours, kwh_per_hour, load_factor, total_kwh_3p = 0, 0, 0, 0
+            if not data.empty and len(data) > 1:
+                energy_col_3p = 'Total Consumed Real Energy (Wh)'
+                if energy_col_3p in data.columns and not data[energy_col_3p].dropna().empty:
+                    energy_vals_3p = data[energy_col_3p].dropna()
+                    if len(energy_vals_3p) > 1: total_kwh_3p = (energy_vals_3p.iloc[-1] - energy_vals_3p.iloc[0]) / 1000
+                
+                duration = data['Datetime'].iloc[-1] - data['Datetime'].iloc[0]
+                duration_hours = duration.total_seconds() / 3600
+                kwh_per_hour = total_kwh_3p / duration_hours if duration_hours > 0 else 0
+                peak_kw = data['Total Avg Real Power (kW)'].abs().max() if 'Total Avg Real Power (kW)' in data.columns else 0
+                load_factor = avg_power_kw / peak_kw if peak_kw > 0 else 0
 
             st.subheader("Performance Metrics")
             col1, col2, col3, col4 = st.columns(4)
@@ -313,12 +366,18 @@ else:
             col4.metric("Max Current Imbalance", f"{imbalance:.1f} %" if imbalance > 0 else "N/A", help="Under 5% is good.")
 
             kpi_summary = {
-                "Analysis Mode": "Three-Phase", "Average Total Power": f"{avg_power_kw:.2f} kW",
-                "Peak Demand (MD)": f"{peak_kva_3p:.2f} kVA", "Average Total Power Factor": f"{avg_pf:.3f}",
-                "Max Current Imbalance": f"{imbalance:.1f} %"
+                "Analysis Mode": "Three-Phase",
+                "Average Total Power": f"{avg_power_kw:.2f} kW",
+                "Peak Demand (MD)": f"{peak_kva_3p:.2f} kVA",
+                "Average Total Power Factor": f"{avg_pf:.3f}",
+                "Max Current Imbalance": f"{imbalance:.1f} %",
+                "Total Consumed Energy": f"{total_kwh_3p:.2f} kWh",
+                "Operating Duration": f"{duration_hours:.2f} hours",
+                "Average Hourly Consumption": f"{kwh_per_hour:.2f} kWh/hr",
+                "Load Factor": f"{load_factor:.2f}"
             }
 
-            tab_names_3p = []
+            tab_names_3p = ["📈 Key Metrics"]
             tabs_to_show = {}
             if all(c in data.columns for c in current_cols): tabs_to_show["📊 Load Balance"] = True
             if all(c in data.columns for c in ['L1 Avg Voltage (V)', 'L2 Avg Voltage (V)', 'L3 Avg Voltage (V)']): tabs_to_show["🩺 Voltage Health"] = True
@@ -332,6 +391,33 @@ else:
 
             tabs = st.tabs(tab_names_3p)
             current_tab_idx = 0
+            
+            with tabs[current_tab_idx]:
+                st.subheader("Operational Key Metrics & Cost Estimation")
+                if duration_hours > 0:
+                    col1, col2, col3 = st.columns(3)
+                    col1.metric("Operating Duration", f"{duration_hours:.2f} hours")
+                    col2.metric("Avg. Hourly Consumption", f"{kwh_per_hour:.2f} kWh/hr")
+                    col3.metric("Load Factor", f"{load_factor:.2f}", help="Ratio of average load to peak load. A higher value indicates more consistent power use.")
+
+                    with st.expander("Estimate Operating Cost"):
+                        st.info("Enter your current EFL tariff rates below to estimate costs for this period.")
+                        cost_per_kwh = st.number_input("Cost per kWh ($)", value=0.40, step=0.01, format="%.2f", key="cost_kwh_3p")
+                        cost_per_kva_md = st.number_input("Peak Demand Charge per kVA ($)", value=18.00, step=0.50, format="%.2f", key="cost_kva_3p")
+
+                        total_energy_cost = total_kwh_3p * cost_per_kwh
+                        total_demand_cost = peak_kva_3p * cost_per_kva_md
+                        total_cost = total_energy_cost + total_demand_cost
+
+                        st.markdown("---")
+                        cost_col1, cost_col2, cost_col3 = st.columns(3)
+                        cost_col1.metric("Energy Cost", f"${total_energy_cost:,.2f}")
+                        cost_col2.metric("Demand Cost", f"${total_demand_cost:,.2f}")
+                        cost_col3.metric("Total Estimated Cost", f"${total_cost:,.2f}")
+                else:
+                    st.info("Not enough data in the selected range to calculate operational metrics.")
+
+            current_tab_idx += 1
             if "📊 Load Balance" in tabs_to_show:
                 with tabs[current_tab_idx]:
                     st.subheader("Current Load Balance Across Phases")
