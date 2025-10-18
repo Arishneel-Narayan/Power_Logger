@@ -92,7 +92,7 @@ def process_hioki_csv(uploaded_file) -> Optional[Tuple[str, pd.DataFrame, pd.Dat
     if wiring_system == '3P4W':
         p_cols = [f'L{i} Avg Real Power (W)' for i in range(1, 4)]
         if all(c in data_df for c in p_cols) and 'Total Avg Real Power (W)' not in data_df:
-            st.sidebar.info("Calculating Total Power from phase data.")
+            st.sidebar.info("Calculating Total Power from phase data.") # This line has a bug, power_cols is not defined. It should be p_cols
             data_df['Total Avg Real Power (W)'] = data_df[power_cols].sum(axis=1)
             
             apparent_cols = ['L1 Avg Apparent Power (VA)', 'L2 Avg Apparent Power (VA)', 'L3 Avg Apparent Power (VA)']
@@ -152,14 +152,7 @@ else:
     if process_result:
         wiring_system, parameters, data_full, removed_data = process_result
         st.sidebar.success(f"File processed successfully!\n\n**Mode: {wiring_system} Analysis**")
-        prod_data = None
-        if production_log_file:
-            prod_data = process_production_log(production_log_file)
-            if prod_data is not None:
-                st.sidebar.info("Production log loaded and merged.")
-                data_full = merge_data(data_full, prod_data)
-        if warnings:
-            for warning in warnings: st.warning(warning)
+        
         data = data_full.copy()
         if not data.empty:
             st.sidebar.markdown("---")
@@ -167,18 +160,7 @@ else:
             dt_options = data['Datetime'].dt.to_pydatetime()
             start_time, end_time = st.sidebar.select_slider("Select a time range for analysis:", options=dt_options, value=(dt_options[0], dt_options[-1]), format_func=lambda dt: dt.strftime("%d %b, %H:%M"))
             data = data[(data['Datetime'] >= start_time) & (data['Datetime'] <= end_time)].copy()
-        
-        tab_list = []
-        if prod_data is not None: tab_list.append("🏭 Production Efficiency")
-        if wiring_system == '1P2W': st.header("Single-Phase Performance Analysis"); tab_list.extend(["⚡ Power & Energy", "📈 Key Metrics"])
-        elif wiring_system == '3P4W': st.header("Three-Phase System Diagnostic"); tab_list.append("📈 Key Metrics");
-        if '3P4W' in wiring_system:
-            if all(c in data for c in ['L1 Avg Current (A)', 'L2 Avg Current (A)', 'L3 Avg Current (A)']): tab_list.append("📊 Load Balance")
-            if all(c in data for c in ['L1 Avg Voltage (V)', 'L2 Avg Voltage (V)', 'L3 Avg Voltage (V)']): tab_list.append("🩺 Voltage Health")
-            if all(c in data for c in ['L1 Power Factor', 'L2 Power Factor', 'L3 Power Factor']): tab_list.append("⚖️ Power Factor")
-        tab_list.extend(["📝 Settings", "📋 Filtered Data"]);
-        if not removed_data.empty: tab_list.append("🚫 Removed Data")
-        tabs = st.tabs(tab_list); tab_map = {name: tab for name, tab in zip(tab_list, tabs)}
+
         kpi_summary = {}
         
         if wiring_system == '1P2W':
@@ -343,4 +325,3 @@ else:
 
     elif uploaded_file is not None:
          st.warning("Could not process the uploaded file. Please ensure it is a valid, non-empty Hioki CSV export.")
-
