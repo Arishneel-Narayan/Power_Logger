@@ -163,7 +163,7 @@ else:
             
             peak_kva = data['Avg Apparent Power (kVA)'].max() if 'Avg Apparent Power (kVA)' in data.columns else 0
             avg_kw = data['Avg Real Power (kW)'].abs().mean() if 'Avg Real Power (kW)' in data.columns else 0
-            avg_pf = data['Power Factor'].abs().mean() if 'Power Factor' in data.columns else 0
+            avg_pf = data['Power Factor'].mean() if 'Power Factor' in data.columns else 0
             
             st.subheader("Performance Metrics")
             col1, col2, col3, col4 = st.columns(4)
@@ -178,45 +178,42 @@ else:
                 "Average Power Factor": f"{avg_pf:.3f}"
             }
             
-            tab_names = ["⚡ Power & Energy", "📝 Measurement Settings", "📋 Full Data"]
+            tab_names = ["⚡ Power Analysis", "📝 Measurement Settings", "📋 Full Data"]
             tabs = st.tabs(tab_names)
-            with tabs[0]:
-                plot_cols = [col for col in ['Avg Real Power (kW)', 'Avg Apparent Power (kVA)', 'Avg Reactive Power (kVAR)'] if col in data.columns]
-                if plot_cols:
-                    st.subheader("Power Consumption Over Time")
-                    fig_power = px.line(data, x='Datetime', y=plot_cols)
-                    st.plotly_chart(fig_power, use_container_width=True)
-                    with st.expander("Show Key Power Statistics"):
-                        stats_data = {
-                            "Max Real Power": f"{data['Avg Real Power (kW)'].max():.2f} kW" if 'Avg Real Power (kW)' in data else "N/A",
-                            "Max Apparent Power": f"{data['Avg Apparent Power (kVA)'].max():.2f} kVA" if 'Avg Apparent Power (kVA)' in data else "N/A"
-                        }
-                        st.json(stats_data)
 
+            with tabs[0]:
+                st.subheader("Power Analysis")
+                if 'Avg Real Power (kW)' in data.columns:
+                    fig_kw = px.line(data, x='Datetime', y='Avg Real Power (kW)', title='Real Power (kW) Over Time')
+                    st.plotly_chart(fig_kw, use_container_width=True)
+                
+                if 'Avg Apparent Power (kVA)' in data.columns:
+                    fig_kva = px.line(data, x='Datetime', y='Avg Apparent Power (kVA)', title='Apparent Power (kVA) Over Time')
+                    st.plotly_chart(fig_kva, use_container_width=True)
+                
+                if 'Avg Reactive Power (kVAR)' in data.columns:
+                    fig_kvar = px.line(data, x='Datetime', y='Avg Reactive Power (kVAR)', title='Reactive Power (kVAR) Over Time')
+                    st.plotly_chart(fig_kvar, use_container_width=True)
+                
                 if 'Power Factor' in data.columns:
-                    st.subheader("Power Factor Over Time")
-                    fig_pf = px.line(data, x='Datetime', y='Power Factor')
+                    fig_pf = px.line(data, x='Datetime', y='Power Factor', title='Power Factor Over Time')
                     fig_pf.add_hline(y=0.95, line_dash="dash", line_color="red")
                     st.plotly_chart(fig_pf, use_container_width=True)
-                    with st.expander("Show Power Factor Statistics"):
-                        stats_pf = {
-                            "Minimum Power Factor": f"{data['Power Factor'].min():.3f}",
-                            "Average Power Factor": f"{data['Power Factor'].mean():.3f}"
-                        }
-                        st.json(stats_pf)
 
             with tabs[1]:
                 st.subheader("Measurement Settings")
                 st.dataframe(parameters)
+            
             with tabs[2]:
                 st.subheader("Full Time-Series Data")
                 st.dataframe(data)
+
 
         elif wiring_system == '3P4W':
             st.header("Three-Phase System Diagnostic")
             
             avg_power_kw = data['Total Avg Real Power (kW)'].mean() if 'Total Avg Real Power (kW)' in data.columns else 0
-            avg_pf = data['Total Power Factor'].abs().mean() if 'Total Power Factor' in data.columns else 0
+            avg_pf = data['Total Power Factor'].mean() if 'Total Power Factor' in data.columns else 0
             peak_kva_3p = data['Total Avg Apparent Power (kVA)'].max() if 'Total Avg Apparent Power (kVA)' in data.columns else 0
             imbalance = 0
             current_cols = ['L1 Avg Current (A)', 'L2 Avg Current (A)', 'L3 Avg Current (A)']
@@ -239,15 +236,34 @@ else:
             
             tab_names_3p = []
             tabs_to_show = {}
+            
+            # Define which tabs to show based on available data
+            tabs_to_show["⚡ Power Analysis"] = True
             if all(c in data.columns for c in current_cols): tabs_to_show["📊 Load Balance"] = True
             if all(c in data.columns for c in ['L1 Avg Voltage (V)', 'L2 Avg Voltage (V)', 'L3 Avg Voltage (V)']): tabs_to_show["🩺 Voltage Health"] = True
             if all(c in data.columns for c in ['L1 Power Factor', 'L2 Power Factor', 'L3 Power Factor']): tabs_to_show["⚖️ Power Factor"] = True
             
-            if tabs_to_show:
-                tab_names_3p.extend(list(tabs_to_show.keys()))
+            tab_names_3p.extend(list(tabs_to_show.keys()))
             tab_names_3p.extend(["📝 Settings", "📋 Full Data"])
+            
             tabs = st.tabs(tab_names_3p)
             current_tab = 0
+
+            if "⚡ Power Analysis" in tabs_to_show:
+                with tabs[current_tab]:
+                    st.subheader("Total Power Analysis")
+                    if 'Total Avg Real Power (kW)' in data.columns:
+                        fig_kw = px.line(data, x='Datetime', y='Total Avg Real Power (kW)', title='Total Real Power (kW) Over Time')
+                        st.plotly_chart(fig_kw, use_container_width=True)
+                    if 'Total Avg Apparent Power (kVA)' in data.columns:
+                        fig_kva = px.line(data, x='Datetime', y='Total Avg Apparent Power (kVA)', title='Total Apparent Power (kVA) Over Time')
+                        st.plotly_chart(fig_kva, use_container_width=True)
+                    if 'Total Power Factor' in data.columns:
+                        fig_pf = px.line(data, x='Datetime', y='Total Power Factor', title='Total Power Factor Over Time')
+                        fig_pf.add_hline(y=0.95, line_dash="dash", line_color="red")
+                        st.plotly_chart(fig_pf, use_container_width=True)
+                current_tab += 1
+
             if "📊 Load Balance" in tabs_to_show:
                 with tabs[current_tab]:
                     st.subheader("Current Load Balance Across Phases")
@@ -256,6 +272,7 @@ else:
                     with st.expander("Show Current Statistics"):
                         st.dataframe(data[current_cols].describe().T[['mean', 'min', 'max']].rename(columns={'mean':'Average', 'min':'Minimum', 'max':'Maximum'}))
                 current_tab += 1
+
             if "🩺 Voltage Health" in tabs_to_show:
                 with tabs[current_tab]:
                     st.subheader("Voltage Stability Across Phases")
@@ -265,6 +282,7 @@ else:
                     with st.expander("Show Voltage Statistics"):
                         st.dataframe(data[voltage_cols].describe().T[['mean', 'min', 'max']].rename(columns={'mean':'Average', 'min':'Minimum', 'max':'Maximum'}))
                 current_tab += 1
+
             if "⚖️ Power Factor" in tabs_to_show:
                 with tabs[current_tab]:
                     st.subheader("Power Factor Per Phase")
@@ -274,9 +292,11 @@ else:
                     with st.expander("Show Power Factor Statistics"):
                         st.dataframe(data[pf_cols].describe().T[['mean', 'min', 'max']].rename(columns={'mean':'Average', 'min':'Minimum', 'max':'Maximum'}))
                 current_tab += 1
+
             with tabs[current_tab]:
                 st.subheader("Measurement Settings")
                 st.dataframe(parameters)
+
             with tabs[current_tab+1]:
                 st.subheader("Full Time-Series Data")
                 st.dataframe(data)
