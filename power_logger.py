@@ -279,8 +279,8 @@ else:
                 with tabs[current_tab]:
                     st.subheader("Voltage Stability Across Phases")
                     voltage_cols = ['L1 Avg Voltage (V)', 'L2 Avg Voltage (V)', 'L3 Avg Voltage (V)']
-                    fig_voltage = px.line(data, x='Datetime', y=voltage_cols, color_discrete_map={voltage_cols[0]: 'red', voltage_cols[1]: 'blue', voltage_cols[2]: 'green'})
-                    st.plotly_chart(fig_voltage, use_container_width=True)
+                    fig_voltage = px.line(data, x='Datetime', y=voltage_cols, title="Voltage Stability Across Phases", color_discrete_map={voltage_cols[0]: 'red', voltage_cols[1]: 'blue', voltage_cols[2]: 'green'})
+                    st.plotly_chart(fig_voltage, use_container_width=True, key="voltage_chart")
                     with st.expander("Show Voltage Statistics"):
                         st.dataframe(data[voltage_cols].describe().T[['mean', 'min', 'max']].rename(columns={'mean':'Average', 'min':'Minimum', 'max':'Maximum'}))
                 current_tab += 1
@@ -289,8 +289,8 @@ else:
                 with tabs[current_tab]:
                     st.subheader("Power Factor Per Phase")
                     pf_cols = ['L1 Power Factor', 'L2 Power Factor', 'L3 Power Factor']
-                    fig_pf_3p = px.line(data, x='Datetime', y=pf_cols, color_discrete_map={pf_cols[0]: 'red', pf_cols[1]: 'blue', pf_cols[2]: 'green'})
-                    st.plotly_chart(fig_pf_3p, use_container_width=True)
+                    fig_pf_3p = px.line(data, x='Datetime', y=pf_cols, title="Power Factor Per Phase", color_discrete_map={pf_cols[0]: 'red', pf_cols[1]: 'blue', pf_cols[2]: 'green'})
+                    st.plotly_chart(fig_pf_3p, use_container_width=True, key="pf_chart_3p")
                     with st.expander("Show Power Factor Statistics"):
                         st.dataframe(data[pf_cols].describe().T[['mean', 'min', 'max']].rename(columns={'mean':'Average', 'min':'Minimum', 'max':'Maximum'}))
                 current_tab += 1
