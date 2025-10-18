@@ -72,9 +72,9 @@ def process_hioki_csv(uploaded_file) -> Optional[Tuple[str, pd.DataFrame, pd.Dat
     data_df.columns = data_df.iloc[0]
     data_df = data_df.iloc[1:].reset_index(drop=True).rename(columns=ts_rename_map)
     data_df['Date'].ffill(inplace=True)
-    data_df['Datetime'] = pd.to_datetime(data_df['Date'] + ' ' + data_df['Etime'], errors='coerce', dayfirst=True)
-    data_df.dropna(subset=['Datetime'], inplace=True)
+    data_df['Datetime'] = pd.to_datetime(data_df['Date'] + ' ' + data_df['Etime'], errors='coerce', dayfirst=True, format='%d/%m/%Y %H:%M:%S.%f')
     data_df.sort_values(by='Datetime', inplace=True, ignore_index=True)
+    data_df.dropna(subset=['Datetime'], inplace=True)
     for col in data_df.columns:
         if any(k in str(col) for k in ['(W)', '(VA)', 'VAR', '(V)', '(A)', 'Factor', 'Energy', '(Hz)', '(kVARh)']):
             data_df[col] = pd.to_numeric(data_df[col], errors='coerce').abs()
