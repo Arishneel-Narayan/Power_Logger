@@ -163,7 +163,7 @@ else:
             
             peak_kva = data['Avg Apparent Power (kVA)'].max() if 'Avg Apparent Power (kVA)' in data.columns else 0
             avg_kw = data['Avg Real Power (kW)'].abs().mean() if 'Avg Real Power (kW)' in data.columns else 0
-            avg_pf = data['Power Factor'].mean() if 'Power Factor' in data.columns else 0
+            avg_pf = data['Power Factor'].abs().mean() if 'Power Factor' in data.columns else 0
             
             st.subheader("Performance Metrics")
             col1, col2, col3, col4 = st.columns(4)
@@ -213,7 +213,7 @@ else:
             st.header("Three-Phase System Diagnostic")
             
             avg_power_kw = data['Total Avg Real Power (kW)'].mean() if 'Total Avg Real Power (kW)' in data.columns else 0
-            avg_pf = data['Total Power Factor'].mean() if 'Total Power Factor' in data.columns else 0
+            avg_pf = data['Total Power Factor'].abs().mean() if 'Total Power Factor' in data.columns else 0
             peak_kva_3p = data['Total Avg Apparent Power (kVA)'].max() if 'Total Avg Apparent Power (kVA)' in data.columns else 0
             imbalance = 0
             current_cols = ['L1 Avg Current (A)', 'L2 Avg Current (A)', 'L3 Avg Current (A)']
