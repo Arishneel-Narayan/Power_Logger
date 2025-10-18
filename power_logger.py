@@ -42,10 +42,10 @@ def get_rename_map(wiring_system: str) -> dict:
     return param_map, ts_map
 
 
-def process_hioki_csv(uploaded_file) -> Optional[Tuple[str, pd.DataFrame, pd.DataFrame, pd.DataFrame]]:
+def process_hioki_csv(uploaded_file) -> Optional[Tuple[str, pd.DataFrame, pd.DataFrame]]:
     """
-    Main data processing pipeline. It now returns the detected wiring system, cleaned dataframes,
-    and a separate dataframe for removed inactive periods.
+    Main data processing pipeline. It returns the detected wiring system and the cleaned dataframes
+    for parameters and time-series data.
     """
     try:
         df_raw = pd.read_csv(uploaded_file, header=None, on_bad_lines='skip', encoding='utf-8')
@@ -78,22 +78,11 @@ def process_hioki_csv(uploaded_file) -> Optional[Tuple[str, pd.DataFrame, pd.Dat
         if any(k in str(col) for k in ['(W)', '(VA)', 'VAR', '(V)', '(A)', 'Factor', 'Energy', '(Hz)', '(kVARh)']):
             data_df[col] = pd.to_numeric(data_df[col], errors='coerce')
     
-    activity_col = 'L1 Avg Current (A)'
-    removed_data = pd.DataFrame()
-    if activity_col in data_df.columns and not data_df[activity_col].dropna().empty:
-        is_flat = data_df[activity_col].rolling(window=5, center=True).std(ddof=0).fillna(0) < 1e-4
-        active_data = data_df[~is_flat].copy()
-        removed_data = data_df[is_flat].copy()
-
-        if not removed_data.empty:
-            st.sidebar.warning(f"{len(removed_data)} inactive data points were removed from main analysis.")
-            data_df = active_data
-
     if wiring_system == '3P4W':
         p_cols = [f'L{i} Avg Real Power (W)' for i in range(1, 4)]
         if all(c in data_df for c in p_cols) and 'Total Avg Real Power (W)' not in data_df:
-            st.sidebar.info("Calculating Total Power from phase data.") # This line has a bug, power_cols is not defined. It should be p_cols
-            data_df['Total Avg Real Power (W)'] = data_df[power_cols].sum(axis=1)
+            st.sidebar.info("Calculating Total Power from phase data.")
+            data_df['Total Avg Real Power (W)'] = data_df[p_cols].sum(axis=1)
             
             apparent_cols = ['L1 Avg Apparent Power (VA)', 'L2 Avg Apparent Power (VA)', 'L3 Avg Apparent Power (VA)']
             if all(c in data_df.columns for c in apparent_cols):
@@ -114,7 +103,7 @@ def process_hioki_csv(uploaded_file) -> Optional[Tuple[str, pd.DataFrame, pd.Dat
             new_col_name = col_name.replace('(W)', '(kW)').replace('(VA)', '(kVA)').replace(' (VAR)', ' (kVAR)')
             data_df[new_col_name] = data_df[col_name] / 1000
 
-    return wiring_system, params_df, data_df, removed_data
+    return wiring_system, params_df, data_df
 
 # --- 2. AI and Cost Calculation Services ---
 def get_gemini_analysis(summary_metrics, data_stats, params_info, additional_context=""):
@@ -150,7 +139,7 @@ if uploaded_file is None:
 else:
     process_result = process_hioki_csv(uploaded_file)
     if process_result:
-        wiring_system, parameters, data_full, removed_data = process_result
+        wiring_system, parameters, data_full = process_result
         st.sidebar.success(f"File processed successfully!\n\n**Mode: {wiring_system} Analysis**")
         
         data = data_full.copy()
@@ -189,10 +178,7 @@ else:
                 "Average Power Factor": f"{avg_pf:.3f}"
             }
             
-            tab_names = ["⚡ Power & Energy", "📝 Measurement Settings", "📋 Active Data"]
-            if not removed_data.empty:
-                tab_names.append("🚫 Removed Inactive Periods")
-            
+            tab_names = ["⚡ Power & Energy", "📝 Measurement Settings", "📋 Full Data"]
             tabs = st.tabs(tab_names)
             with tabs[0]:
                 plot_cols = [col for col in ['Avg Real Power (kW)', 'Avg Apparent Power (kVA)', 'Avg Reactive Power (kVAR)'] if col in data.columns]
@@ -223,13 +209,8 @@ else:
                 st.subheader("Measurement Settings")
                 st.dataframe(parameters)
             with tabs[2]:
-                st.subheader("Active Time-Series Data")
+                st.subheader("Full Time-Series Data")
                 st.dataframe(data)
-            if not removed_data.empty:
-                with tabs[3]:
-                    st.subheader("Removed Inactive Data Periods")
-                    st.info("The following data points were removed from the main analysis because they showed no significant fluctuation, likely indicating the machine was off or the measurement was paused.")
-                    st.dataframe(removed_data)
 
         elif wiring_system == '3P4W':
             st.header("Three-Phase System Diagnostic")
@@ -264,10 +245,7 @@ else:
             
             if tabs_to_show:
                 tab_names_3p.extend(list(tabs_to_show.keys()))
-            tab_names_3p.extend(["📝 Settings", "📋 Filtered Active Data"])
-            if not removed_data.empty:
-                tab_names_3p.append("🚫 Removed Inactive Periods")
-            
+            tab_names_3p.extend(["📝 Settings", "📋 Full Data"])
             tabs = st.tabs(tab_names_3p)
             current_tab = 0
             if "📊 Load Balance" in tabs_to_show:
@@ -300,12 +278,8 @@ else:
                 st.subheader("Measurement Settings")
                 st.dataframe(parameters)
             with tabs[current_tab+1]:
-                st.subheader("Filtered Active Time-Series Data")
+                st.subheader("Full Time-Series Data")
                 st.dataframe(data)
-            if not removed_data.empty:
-                with tabs[current_tab+2]:
-                    st.subheader("Removed Inactive Data Periods")
-                    st.dataframe(removed_data)
 
         st.sidebar.markdown("---")
         st.sidebar.subheader("Add Custom AI Context")
