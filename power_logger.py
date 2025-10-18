@@ -71,7 +71,7 @@ def process_hioki_csv(uploaded_file) -> Optional[Tuple[str, pd.DataFrame, pd.Dat
     data_df = df_raw.iloc[header_row_index:].copy()
     data_df.columns = data_df.iloc[0]
     data_df = data_df.iloc[1:].reset_index(drop=True).rename(columns=ts_rename_map)
-    data_df['Datetime'] = pd.to_datetime(data_df['Date'] + ' ' + data_df['Etime'], errors='coerce')
+    data_df['Datetime'] = pd.to_datetime(data_df['Date'] + ' ' + data_df['Etime'], errors='coerce', dayfirst=True)
     data_df.dropna(subset=['Datetime'], inplace=True)
     data_df.sort_values(by='Datetime', inplace=True, ignore_index=True)
     for col in data_df.columns:
