@@ -77,7 +77,7 @@ def process_hioki_csv(uploaded_file) -> Optional[Tuple[str, pd.DataFrame, pd.Dat
     data_df.sort_values(by='Datetime', inplace=True, ignore_index=True)
     for col in data_df.columns:
         if any(k in str(col) for k in ['(W)', '(VA)', 'VAR', '(V)', '(A)', 'Factor', 'Energy', '(Hz)', '(kVARh)']):
-            data_df[col] = pd.to_numeric(data_df[col], errors='coerce')
+            data_df[col] = pd.to_numeric(data_df[col], errors='coerce').abs()
     
     if wiring_system == '3P4W':
         p_cols = [f'L{i} Avg Real Power (W)' for i in range(1, 4)]
