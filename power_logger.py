@@ -154,19 +154,6 @@ def process_hioki_csv(uploaded_file) -> Optional[Tuple[str, pd.DataFrame, pd.Dat
     return wiring_system, params_df, data_df
 
 # --- 2. AI Service ---
-def generate_trend_summary(data: pd.DataFrame, wiring_system: str) -> str:
-    if data.empty: return "No data available to analyze trends."
-    key_metric = 'Total Avg Real Power (kW)' if wiring_system == '3P4W' and 'Total Avg Real Power (kW)' in data.columns else 'Avg Real Power (kW)' if 'Avg Real Power (kW)' in data.columns else None
-    if not key_metric or data[key_metric].dropna().empty: return "Key power metric not available for trend analysis."
-    metric_series = data[key_metric]
-    start_time, end_time = data['Datetime'].iloc[0].strftime('%H:%M:%S'), data['Datetime'].iloc[-1].strftime('%H:%M:%S')
-    initial_power, final_power = metric_series.iloc[0], metric_series.iloc[-1]
-    peak_power, peak_time = metric_series.max(), data.loc[metric_series.idxmax(), 'Datetime'].strftime('%H:%M:%S')
-    min_power, min_time = metric_series.min(), data.loc[metric_series.idxmin(), 'Datetime'].strftime('%H:%M:%S')
-    return (f"The analyzed period from {start_time} to {end_time} shows a significant fluctuation in power consumption. "
-            f"It began at {initial_power:.2f} kW. The primary operational peak reached {peak_power:.2f} kW at {peak_time}. "
-            f"The load dropped to a minimum of {min_power:.2f} kW at {min_time}. The period concluded at {final_power:.2f} kW.")
-
 def get_gemini_analysis(summary_metrics, data_stats, trend_summary, params_info, additional_context=""):
     system_prompt = """You are an expert industrial energy efficiency analyst and process engineer for FMF Foods Ltd., a food manufacturing company in Fiji. Your task is to analyze power consumption data from industrial machinery at our biscuit factory in Suva. Your analysis must be framed within the context of a manufacturing environment.
     Consider the following core principles:
@@ -270,8 +257,8 @@ else:
                     st.plotly_chart(fig_power, use_container_width=True)
                     with st.expander("Show Key Power Statistics"):
                         stats_data = {
-                            "Max Real Power": f"{data['Avg Real Power (kW)'].max():.2f} kW" if 'Avg Real Power (kW)' in data else "N/A",
-                            "Max Apparent Power": f"{data['Avg Apparent Power (kVA)'].max():.2f} kVA" if 'Avg Apparent Power (kVA)' in data else "N/A"
+                            "Max Real Power": f"{data['Avg Real Power (kW)'].max():.2f} kW" if 'Avg Real Power (kW)' in data.columns else "N/A",
+                            "Max Apparent Power": f"{data['Avg Apparent Power (kVA)'].max():.2f} kVA" if 'Avg Apparent Power (kVA)' in data.columns else "N/A"
                         }
                         st.json(stats_data)
                 if 'Power Factor' in data.columns:
