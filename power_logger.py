@@ -91,8 +91,8 @@ def process_hioki_csv(uploaded_file) -> Optional[Tuple[str, pd.DataFrame, pd.Dat
         params_df_raw = pd.read_csv(io.StringIO("\n".join(metadata_lines)), header=None, on_bad_lines='skip', usecols=[0, 1])
         params_df_raw.columns = ['Parameter', 'Value']
         wiring_system = params_df_raw.set_index('Parameter').loc['WIRING', 'Value']
-    except (KeyError, IndexError) as e:
-        st.sidebar.error(f"Could not determine wiring system from metadata. Error: {e}")
+    except (KeyError, IndexError):
+        st.sidebar.error("Could not determine wiring system from metadata.")
         return None
     except Exception as e:
         st.error(f"Error parsing file metadata: {e}")
@@ -113,8 +113,14 @@ def process_hioki_csv(uploaded_file) -> Optional[Tuple[str, pd.DataFrame, pd.Dat
     data_df = data_df.rename(columns=ts_rename_map)
     
     data_df['Datetime'] = pd.to_datetime(data_df['Date'] + ' ' + data_df['Etime'], errors='coerce', dayfirst=True)
+    
     data_df.dropna(subset=['Datetime'], inplace=True)
-    data_df.dropna(subset=data_df.columns.drop(['Datetime', 'Date', 'Etime', 'Status']), how='all', inplace=True)
+
+    identifier_cols_to_check = ['Datetime', 'Date', 'Etime', 'Status']
+    existing_identifiers = [col for col in identifier_cols_to_check if col in data_df.columns]
+    measurement_cols = data_df.columns.drop(existing_identifiers)
+    data_df.dropna(subset=measurement_cols, how='all', inplace=True)
+    
     data_df = data_df.sort_values(by='Datetime').reset_index(drop=True)
 
     for col in data_df.columns:
@@ -148,11 +154,50 @@ def process_hioki_csv(uploaded_file) -> Optional[Tuple[str, pd.DataFrame, pd.Dat
     return wiring_system, params_df, data_df
 
 # --- 2. AI Service ---
+def generate_trend_summary(data: pd.DataFrame, wiring_system: str) -> str:
+    if data.empty: return "No data available to analyze trends."
+    key_metric = 'Total Avg Real Power (kW)' if wiring_system == '3P4W' and 'Total Avg Real Power (kW)' in data.columns else 'Avg Real Power (kW)' if 'Avg Real Power (kW)' in data.columns else None
+    if not key_metric or data[key_metric].dropna().empty: return "Key power metric not available for trend analysis."
+    metric_series = data[key_metric]
+    start_time, end_time = data['Datetime'].iloc[0].strftime('%H:%M:%S'), data['Datetime'].iloc[-1].strftime('%H:%M:%S')
+    initial_power, final_power = metric_series.iloc[0], metric_series.iloc[-1]
+    peak_power, peak_time = metric_series.max(), data.loc[metric_series.idxmax(), 'Datetime'].strftime('%H:%M:%S')
+    min_power, min_time = metric_series.min(), data.loc[metric_series.idxmin(), 'Datetime'].strftime('%H:%M:%S')
+    return (f"The analyzed period from {start_time} to {end_time} shows a significant fluctuation in power consumption. "
+            f"It began at {initial_power:.2f} kW. The primary operational peak reached {peak_power:.2f} kW at {peak_time}. "
+            f"The load dropped to a minimum of {min_power:.2f} kW at {min_time}. The period concluded at {final_power:.2f} kW.")
+
 def get_gemini_analysis(summary_metrics, data_stats, trend_summary, params_info, additional_context=""):
-    # ... (This function is unchanged)
-    system_prompt = "..." 
-    user_prompt = "..." 
-    # ... 
+    system_prompt = """You are an expert industrial energy efficiency analyst and process engineer for FMF Foods Ltd., a food manufacturing company in Fiji. Your task is to analyze power consumption data from industrial machinery at our biscuit factory in Suva. Your analysis must be framed within the context of a manufacturing environment.
+    Consider the following core principles:
+    - **Operational Cycles:** You MUST use the 'Summary of Trends & Fluctuations' to understand the operational sequence (e.g., start-up, peak load, idle time) and correlate it with the detailed statistics.
+    - **Equipment Health:** Interpret electrical data as indicators of mechanical health.
+    - **Cost Reduction:** Link your findings directly to cost-saving opportunities by focusing on reducing peak demand (MD) and improving power factor.
+    - **Quantitative Significance:** When analyzing percentage-based metrics (like current imbalance), you MUST refer to the absolute values in the 'Statistical Summary of Time-Series Data' to determine the real-world impact.
+    Provide a concise, actionable report in Markdown format with three sections: 1. Executive Summary, 2. Key Observations & Pattern Analysis, and 3. Actionable Recommendations. Address the user as a fellow process optimization engineer."""
+    user_prompt = f"""
+    Good morning, Please analyze the following power consumption data for an industrial machine at our Suva facility.
+    **Key Performance Indicators:**\n{summary_metrics}
+    **Summary of Trends & Fluctuations:**\n{trend_summary}
+    **Statistical Summary of Time-Series Data:**\n{data_stats}
+    **Measurement Parameters:**\n{params_info}
+    """
+    if additional_context:
+        user_prompt += f"**Additional Engineer's Context:**\n{additional_context}"
+    user_prompt += "\nBased on all this information, please generate a report with your insights and recommendations for process optimization."
+    try:
+        api_key = st.secrets["GEMINI_API_KEY"]
+        api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key={api_key}"
+        payload = {"contents": [{"parts": [{"text": user_prompt}]}],"systemInstruction": {"parts": [{"text": system_prompt}]}}
+        response = requests.post(api_url, json=payload, timeout=120)
+        response.raise_for_status()
+        result = response.json()
+        if 'error' in result: return f"Error from Gemini API: {result['error']['message']}"
+        candidate = result.get('candidates', [{}])[0]
+        content = candidate.get('content', {}).get('parts', [{}])[0]
+        return content.get('text', "Error: Could not extract analysis from the API response.")
+    except Exception as e:
+        return f"An error occurred: {e}"
 
 # --- 3. Streamlit UI and Analysis Section ---
 st.set_page_config(layout="wide", page_title="FMF Power Consumption Analysis")
@@ -183,7 +228,7 @@ else:
                 value=(min_ts.to_pydatetime(), max_ts.to_pydatetime()),
                 format="DD/MM/YY - HH:mm"
             )
-            data = data[(data['Datetime'] >= start_time) & (data['Datetime'] <= end_time)].copy()
+            data = data_full[(data_full['Datetime'] >= start_time) & (data_full['Datetime'] <= end_time)].copy()
         
         kpi_summary = {}
         
@@ -214,9 +259,41 @@ else:
             }
             
             tab_names = ["⚡ Power & Energy", "📝 Measurement Settings", "📋 Full Data Table"]
-            tabs = st.tabs(tab_names)
-            #... (Restored UI logic)
             
+            tabs = st.tabs(tab_names)
+            with tabs[0]:
+                plot_cols = [col for col in ['Avg Real Power (kW)', 'Avg Apparent Power (kVA)', 'Avg Reactive Power (kVAR)'] if col in data.columns]
+                if plot_cols:
+                    st.subheader("Power Consumption Over Time")
+                    st.info("This graph shows the Real (useful work), Apparent (total supplied), and Reactive (wasted) power. Look for high Apparent or Reactive power relative to Real power, which indicates electrical inefficiency.")
+                    fig_power = px.line(data, x='Datetime', y=plot_cols)
+                    st.plotly_chart(fig_power, use_container_width=True)
+                    with st.expander("Show Key Power Statistics"):
+                        stats_data = {
+                            "Max Real Power": f"{data['Avg Real Power (kW)'].max():.2f} kW" if 'Avg Real Power (kW)' in data else "N/A",
+                            "Max Apparent Power": f"{data['Avg Apparent Power (kVA)'].max():.2f} kVA" if 'Avg Apparent Power (kVA)' in data else "N/A"
+                        }
+                        st.json(stats_data)
+                if 'Power Factor' in data.columns:
+                    st.subheader("Power Factor Over Time")
+                    st.info("Power Factor is an efficiency score (Real Power / Apparent Power). Values below 0.95 (the red line) can lead to utility penalties and indicate wasted energy.")
+                    fig_pf = px.line(data, x='Datetime', y='Power Factor')
+                    fig_pf.add_hline(y=0.95, line_dash="dash", line_color="red")
+                    st.plotly_chart(fig_pf, use_container_width=True)
+                    with st.expander("Show Power Factor Statistics"):
+                        stats_pf = {
+                            "Minimum Power Factor": f"{data['Power Factor'].min():.3f}",
+                            "Average Power Factor": f"{data['Power Factor'].mean():.3f}"
+                        }
+                        st.json(stats_pf)
+
+            with tabs[1]:
+                st.subheader("Measurement Settings")
+                st.dataframe(parameters)
+            with tabs[2]:
+                st.subheader("Full Raw Data Table")
+                st.dataframe(data_full)
+
         elif wiring_system == '3P4W':
             st.header("Three-Phase System Diagnostic")
             
@@ -244,15 +321,100 @@ else:
             
             tab_names_3p = ["📅 Daily Breakdown", "📊 Current & Load Balance", "🩺 Voltage Health", "⚡ Power Analysis", "⚖️ Power Factor", "📝 Settings", "📋 Full Data Table"]
             tabs = st.tabs(tab_names_3p)
-            # ... (Restored UI logic for all tabs) ...
+            
+            with tabs[0]:
+                st.subheader("24-Hour Operational Snapshot")
+                st.info("Select a specific day to generate a detailed 24-hour subplot of all key electrical parameters. This is essential for comparing shift performance or analyzing specific production runs.")
+                unique_days = data_full['Datetime'].dt.date.unique()
+                selected_day = st.selectbox("Select a day for detailed analysis:", options=unique_days, format_func=lambda d: d.strftime('%A, %d %B %Y'))
+                
+                if selected_day:
+                    daily_data = data_full[data_full['Datetime'].dt.date == selected_day]
+                    
+                    fig = make_subplots(rows=4, cols=1, shared_xaxes=True, subplot_titles=("Voltage Envelope (V)", "Current Envelope (A)", "Real Power (kW)", "Power Factor"))
 
+                    for i in range(1, 4):
+                        for stat in ['Min', 'Avg', 'Max']:
+                            col = f'L{i} {stat} Voltage (V)'
+                            if col in daily_data.columns:
+                                fig.add_trace(go.Scatter(x=daily_data['Datetime'], y=daily_data[col], name=col, mode='lines'), row=1, col=1)
+                    for i in range(1, 4):
+                        for stat in ['Min', 'Avg', 'Max']:
+                            col = f'L{i} {stat} Current (A)'
+                            if col in daily_data.columns:
+                                fig.add_trace(go.Scatter(x=daily_data['Datetime'], y=daily_data[col], name=col, mode='lines'), row=2, col=1)
+                    for i in range(1, 4):
+                        col = f'L{i} Avg Real Power (kW)'
+                        if col in daily_data.columns:
+                            fig.add_trace(go.Scatter(x=daily_data['Datetime'], y=daily_data[col], name=col, mode='lines'), row=3, col=1)
+                    for i in range(1, 4):
+                        col = f'L{i} Power Factor'
+                        if col in daily_data.columns:
+                            fig.add_trace(go.Scatter(x=daily_data['Datetime'], y=daily_data[col], name=col, mode='lines'), row=4, col=1)
+
+                    fig.update_layout(height=1000, title_text=f"Full Operational Breakdown for {selected_day.strftime('%d %B %Y')}")
+                    st.plotly_chart(fig, use_container_width=True)
+            
+            with tabs[1]:
+                st.subheader("Current Operational Envelope per Phase")
+                st.info("This chart shows the full range of current drawn by the machine on each phase, from minimum to maximum. It is crucial for identifying peak inrush currents during start-up and understanding the full load variation.")
+                current_cols_all = [f'{p} {s} Current (A)' for p in ['L1', 'L2', 'L3'] for s in ['Min', 'Avg', 'Max']]
+                plot_cols = [c for c in current_cols_all if c in data.columns]
+                if plot_cols:
+                    fig = px.line(data, x='Datetime', y=plot_cols)
+                    st.plotly_chart(fig, use_container_width=True)
+                    with st.expander("Show Current Statistics"):
+                        st.dataframe(data[plot_cols].describe().T[['mean', 'min', 'max']].rename(columns={'mean':'Average', 'min':'Minimum', 'max':'Maximum'}))
+
+            with tabs[2]:
+                st.subheader("Voltage Operational Envelope per Phase")
+                st.info("This chart displays the voltage stability across all three phases, showing the minimum, average, and maximum recorded values. It is essential for diagnosing power quality issues like voltage sags (dips) under load or surges (spikes) from the grid.")
+                voltage_cols_all = [f'{p} {s} Voltage (V)' for p in ['L1', 'L2', 'L3'] for s in ['Min', 'Avg', 'Max']]
+                plot_cols = [c for c in voltage_cols_all if c in data.columns]
+                if plot_cols:
+                    fig = px.line(data, x='Datetime', y=plot_cols)
+                    st.plotly_chart(fig, use_container_width=True)
+                    with st.expander("Show Voltage Statistics"):
+                        st.dataframe(data[plot_cols].describe().T[['mean', 'min', 'max']].rename(columns={'mean':'Average', 'min':'Minimum', 'max':'Maximum'}))
+
+            with tabs[3]:
+                st.subheader("Power Analysis")
+                st.info("These charts show the Real (useful work), Apparent (total), and Reactive (wasted) power. The top chart shows the total system power, while the bottom chart breaks down the real power by phase to identify imbalances in work being done.")
+                total_power_cols = [c for c in ['Total Avg Real Power (kW)', 'Total Avg Apparent Power (kVA)', 'Total Avg Reactive Power (kVAR)'] if c in data.columns]
+                if total_power_cols:
+                    fig = px.line(data, x='Datetime', y=total_power_cols)
+                    st.plotly_chart(fig, use_container_width=True)
+
+                phase_power_cols = [c for c in ['L1 Avg Real Power (kW)', 'L2 Avg Real Power (kW)', 'L3 Avg Real Power (kW)'] if c in data.columns]
+                if phase_power_cols:
+                    fig2 = px.line(data, x='Datetime', y=phase_power_cols)
+                    st.plotly_chart(fig2, use_container_width=True)
+
+            with tabs[4]:
+                st.subheader("Power Factor per Phase")
+                st.info("Power factor is a measure of electrical efficiency. A value of 1.0 is perfect. Values below 0.95 often incur utility penalties. This chart helps identify if one specific phase is the cause of poor overall efficiency.")
+                pf_cols = [c for c in ['L1 Power Factor', 'L2 Power Factor', 'L3 Power Factor'] if c in data.columns]
+                if pf_cols:
+                    fig = px.line(data, x='Datetime', y=pf_cols)
+                    st.plotly_chart(fig, use_container_width=True)
+                    with st.expander("Show Power Factor Statistics"):
+                        st.dataframe(data[pf_cols].describe().T[['mean', 'min', 'max']].rename(columns={'mean':'Average', 'min':'Minimum', 'max':'Maximum'}))
+
+            with tabs[5]:
+                st.subheader("Measurement Settings")
+                st.dataframe(parameters)
+            
+            with tabs[6]:
+                st.subheader("Full Data Table")
+                st.dataframe(data_full)
+        
         # --- AI Section ---
         st.sidebar.markdown("---")
         st.sidebar.subheader("Add Custom AI Context")
         additional_context = st.sidebar.text_area("Provide specific details about the machine or process (optional):")
 
         if st.sidebar.button("🤖 Get AI-Powered Analysis"):
-             with st.spinner("🧠 AI is analyzing the data... This may take a moment."):
+            with st.spinner("🧠 AI is analyzing the data... This may take a moment."):
                 summary_metrics_text = "\n".join([f"- {key}: {value}" for key, value in kpi_summary.items() if "N/A" not in str(value)])
                 trend_summary_text = generate_trend_summary(data, wiring_system)
                 stats_cols = [col for col in data.columns if data[col].dtype in ['float64', 'int64']]
