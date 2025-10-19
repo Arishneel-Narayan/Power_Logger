@@ -257,8 +257,66 @@ else:
         
         if wiring_system == '1P2W':
             st.header("Single-Phase Performance Analysis")
-            # ... (UI and calculations as before) ...
             
+            total_kwh = 0
+            energy_col = 'Consumed Real Energy (Wh)'
+            if energy_col in data.columns and not data[energy_col].dropna().empty:
+                energy_vals = data[energy_col].dropna()
+                if len(energy_vals) > 1: total_kwh = (energy_vals.iloc[-1] - energy_vals.iloc[0]) / 1000
+            
+            peak_kva = data['Avg Apparent Power (kVA)'].max() if 'Avg Apparent Power (kVA)' in data.columns else 0
+            avg_kw = data['Avg Real Power (kW)'].abs().mean() if 'Avg Real Power (kW)' in data.columns else 0
+            avg_pf = data['Power Factor'].abs().mean() if 'Power Factor' in data.columns else 0
+            
+            st.subheader("Performance Metrics")
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("Total Consumed Energy", f"{total_kwh:.2f} kWh" if total_kwh > 0 else "N/A")
+            col2.metric("Peak Demand (MD)", f"{peak_kva:.2f} kVA" if peak_kva > 0 else "N/A")
+            col3.metric("Average Power Draw", f"{avg_kw:.2f} kW" if avg_kw > 0 else "N/A")
+            col4.metric("Average Power Factor", f"{avg_pf:.3f}" if avg_pf > 0 else "N/A")
+
+            kpi_summary = { 
+                "Analysis Mode": "Single-Phase", "Total Consumed Energy": f"{total_kwh:.2f} kWh",
+                "Peak Demand (MD)": f"{peak_kva:.2f} kVA", "Average Power Draw": f"{avg_kw:.2f} kW",
+                "Average Power Factor": f"{avg_pf:.3f}"
+            }
+            
+            tab_names = ["⚡ Power & Energy", "📝 Measurement Settings", "📋 Full Data Table"]
+            
+            tabs = st.tabs(tab_names)
+            with tabs[0]:
+                plot_cols = [col for col in ['Avg Real Power (kW)', 'Avg Apparent Power (kVA)', 'Avg Reactive Power (kVAR)'] if col in data.columns]
+                if plot_cols:
+                    st.subheader("Power Consumption Over Time")
+                    st.info("This graph shows the Real (useful work), Apparent (total supplied), and Reactive (wasted) power. Look for high Apparent or Reactive power relative to Real power, which indicates electrical inefficiency.")
+                    fig_power = px.line(data, x='Datetime', y=plot_cols)
+                    st.plotly_chart(fig_power, use_container_width=True)
+                    with st.expander("Show Key Power Statistics"):
+                        stats_data = {
+                            "Max Real Power": f"{data['Avg Real Power (kW)'].max():.2f} kW" if 'Avg Real Power (kW)' in data else "N/A",
+                            "Max Apparent Power": f"{data['Avg Apparent Power (kVA)'].max():.2f} kVA" if 'Avg Apparent Power (kVA)' in data else "N/A"
+                        }
+                        st.json(stats_data)
+                if 'Power Factor' in data.columns:
+                    st.subheader("Power Factor Over Time")
+                    st.info("Power Factor is an efficiency score (Real Power / Apparent Power). Values below 0.95 (the red line) can lead to utility penalties and indicate wasted energy.")
+                    fig_pf = px.line(data, x='Datetime', y='Power Factor')
+                    fig_pf.add_hline(y=0.95, line_dash="dash", line_color="red")
+                    st.plotly_chart(fig_pf, use_container_width=True)
+                    with st.expander("Show Power Factor Statistics"):
+                        stats_pf = {
+                            "Minimum Power Factor": f"{data['Power Factor'].min():.3f}",
+                            "Average Power Factor": f"{data['Power Factor'].mean():.3f}"
+                        }
+                        st.json(stats_pf)
+
+            with tabs[1]:
+                st.subheader("Measurement Settings")
+                st.dataframe(parameters)
+            with tabs[2]:
+                st.subheader("Full Raw Data Table")
+                st.dataframe(data_full)
+
         elif wiring_system == '3P4W':
             st.header("Three-Phase System Diagnostic")
             
@@ -272,9 +330,73 @@ else:
                 if avg_currents.mean() > 0: imbalance = (avg_currents.max() - avg_currents.min()) / avg_currents.mean() * 100
             
             st.subheader("Performance Metrics")
-            # ... (UI as before) ...
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("Average Total Power", f"{avg_power_kw:.2f} kW" if avg_power_kw > 0 else "N/A")
+            col2.metric("Peak Demand (MD)", f"{peak_kva_3p:.2f} kVA" if peak_kva_3p > 0 else "N/A")
+            col3.metric("Average Total Power Factor", f"{avg_pf:.3f}" if avg_pf > 0 else "N/A")
+            col4.metric("Max Current Imbalance", f"{imbalance:.1f} %" if imbalance > 0 else "N/A", help="Under 5% is good.")
+
+            kpi_summary = { 
+                "Analysis Mode": "Three-Phase", "Average Total Power": f"{avg_power_kw:.2f} kW",
+                "Peak Demand (MD)": f"{peak_kva_3p:.2f} kVA", "Average Total Power Factor": f"{avg_pf:.3f}",
+                "Max Current Imbalance": f"{imbalance:.1f} %"
+            }
             
-            # ... (Tabs and plotting as before) ...
+            tab_names_3p = ["📊 Current & Load Balance", "🩺 Voltage Health", "⚡ Power Analysis", "⚖️ Power Factor", "📝 Settings", "📋 Full Data Table"]
+            tabs = st.tabs(tab_names_3p)
+            
+            with tabs[0]:
+                st.subheader("Current Operational Envelope per Phase")
+                st.info("This chart shows the full range of current drawn by the machine on each phase, from minimum to maximum. It is crucial for identifying peak inrush currents during start-up and understanding the full load variation.")
+                current_cols_all = [f'{p} {s} Current (A)' for p in ['L1', 'L2', 'L3'] for s in ['Min', 'Avg', 'Max']]
+                plot_cols = [c for c in current_cols_all if c in data.columns]
+                if plot_cols:
+                    fig = px.line(data, x='Datetime', y=plot_cols)
+                    st.plotly_chart(fig, use_container_width=True)
+                    with st.expander("Show Current Statistics"):
+                        st.dataframe(data[plot_cols].describe().T[['mean', 'min', 'max']].rename(columns={'mean':'Average', 'min':'Minimum', 'max':'Maximum'}))
+
+            with tabs[1]:
+                st.subheader("Voltage Operational Envelope per Phase")
+                st.info("This chart displays the voltage stability across all three phases, showing the minimum, average, and maximum recorded values. It is essential for diagnosing power quality issues like voltage sags (dips) under load or surges (spikes) from the grid.")
+                voltage_cols_all = [f'{p} {s} Voltage (V)' for p in ['L1', 'L2', 'L3'] for s in ['Min', 'Avg', 'Max']]
+                plot_cols = [c for c in voltage_cols_all if c in data.columns]
+                if plot_cols:
+                    fig = px.line(data, x='Datetime', y=plot_cols)
+                    st.plotly_chart(fig, use_container_width=True)
+                    with st.expander("Show Voltage Statistics"):
+                        st.dataframe(data[plot_cols].describe().T[['mean', 'min', 'max']].rename(columns={'mean':'Average', 'min':'Minimum', 'max':'Maximum'}))
+
+            with tabs[2]:
+                st.subheader("Power Analysis")
+                st.info("These charts show the Real (useful work), Apparent (total), and Reactive (wasted) power. The top chart shows the total system power, while the bottom chart breaks down the real power by phase to identify imbalances in work being done.")
+                total_power_cols = [c for c in ['Total Avg Real Power (kW)', 'Total Avg Apparent Power (kVA)', 'Total Avg Reactive Power (kVAR)'] if c in data.columns]
+                if total_power_cols:
+                    fig = px.line(data, x='Datetime', y=total_power_cols)
+                    st.plotly_chart(fig, use_container_width=True)
+
+                phase_power_cols = [c for c in ['L1 Avg Real Power (kW)', 'L2 Avg Real Power (kW)', 'L3 Avg Real Power (kW)'] if c in data.columns]
+                if phase_power_cols:
+                    fig2 = px.line(data, x='Datetime', y=phase_power_cols)
+                    st.plotly_chart(fig2, use_container_width=True)
+
+            with tabs[3]:
+                st.subheader("Power Factor per Phase")
+                st.info("Power factor is a measure of electrical efficiency. A value of 1.0 is perfect. Values below 0.95 often incur utility penalties. This chart helps identify if one specific phase is the cause of poor overall efficiency.")
+                pf_cols = [c for c in ['L1 Power Factor', 'L2 Power Factor', 'L3 Power Factor'] if c in data.columns]
+                if pf_cols:
+                    fig = px.line(data, x='Datetime', y=pf_cols)
+                    st.plotly_chart(fig, use_container_width=True)
+                    with st.expander("Show Power Factor Statistics"):
+                        st.dataframe(data[pf_cols].describe().T[['mean', 'min', 'max']].rename(columns={'mean':'Average', 'min':'Minimum', 'max':'Maximum'}))
+
+            with tabs[4]:
+                st.subheader("Measurement Settings")
+                st.dataframe(parameters)
+            
+            with tabs[5]:
+                st.subheader("Full Data Table")
+                st.dataframe(data_full)
         
         # --- AI Section ---
         st.sidebar.markdown("---")
@@ -285,7 +407,6 @@ else:
             with st.spinner("🧠 AI is analyzing the data... This may take a moment."):
                 summary_metrics_text = "\n".join([f"- {key}: {value}" for key, value in kpi_summary.items() if "N/A" not in str(value)])
                 
-                # Generate the new trend summary
                 trend_summary_text = generate_trend_summary(data, wiring_system)
                 
                 stats_cols = [col for col in data.columns if data[col].dtype in ['float64', 'int64']]
@@ -295,7 +416,7 @@ else:
                 ai_response = get_gemini_analysis(
                     summary_metrics_text, 
                     data_stats_text, 
-                    trend_summary_text, # Pass the new summary
+                    trend_summary_text,
                     params_info_text, 
                     additional_context
                 )
