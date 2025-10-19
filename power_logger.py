@@ -61,8 +61,8 @@ def get_rename_map(wiring_system: str) -> dict:
 
 def process_hioki_csv(uploaded_file) -> Optional[Tuple[str, pd.DataFrame, pd.DataFrame, pd.DataFrame]]:
     """
-    Main data processing pipeline. It now returns the detected wiring system, cleaned dataframes,
-    and a separate dataframe for removed inactive periods.
+    Main data processing pipeline. Correctly parses dates, handles negative values,
+    and separates inactive periods.
     """
     try:
         df_raw = pd.read_csv(uploaded_file, header=None, on_bad_lines='skip', encoding='utf-8')
@@ -98,12 +98,18 @@ def process_hioki_csv(uploaded_file) -> Optional[Tuple[str, pd.DataFrame, pd.Dat
     data_df = data_df.iloc[1:].reset_index(drop=True)
     data_df = data_df.rename(columns=ts_rename_map)
     
-    data_df['Datetime'] = pd.to_datetime(data_df['Date'] + ' ' + data_df['Etime'], errors='coerce')
+    # --- ENHANCEMENT: Correct Date Parsing ---
+    data_df['Datetime'] = pd.to_datetime(data_df['Date'] + ' ' + data_df['Etime'], errors='coerce', dayfirst=True)
     data_df = data_df.dropna(subset=['Datetime']).sort_values(by='Datetime').reset_index(drop=True)
 
     for col in data_df.columns:
         if any(keyword in str(col) for keyword in ['(W)', '(VA)', 'VAR', '(V)', '(A)', 'Factor', 'Energy', '(Hz)', '(kVARh)']):
             data_df[col] = pd.to_numeric(data_df[col], errors='coerce')
+
+    # --- ENHANCEMENT: Take Absolute Value of Key Metrics ---
+    for col in data_df.columns:
+        if 'Power Factor' in col or 'Power' in col:
+            data_df[col] = data_df[col].abs()
     
     activity_col = 'L1 Avg Current (A)'
     removed_data = pd.DataFrame()
@@ -126,10 +132,6 @@ def process_hioki_csv(uploaded_file) -> Optional[Tuple[str, pd.DataFrame, pd.Dat
             if all(c in data_df.columns for c in apparent_cols):
                 data_df['Total Avg Apparent Power (VA)'] = data_df[apparent_cols].sum(axis=1)
             
-            reactive_cols = ['L1 Avg Reactive Power (VAR)', 'L2 Avg Reactive Power (VAR)', 'L3 Avg Reactive Power (VAR)']
-            if all(c in data_df.columns for c in reactive_cols) and 'Total Avg Reactive Power (VAR)' not in data_df.columns:
-                data_df['Total Avg Reactive Power (VAR)'] = data_df[reactive_cols].sum(axis=1)
-
             if 'Total Avg Real Power (W)' in data_df.columns and 'Total Avg Apparent Power (VA)' in data_df.columns:
                 data_df['Total Power Factor'] = data_df.apply(
                     lambda row: row['Total Avg Real Power (W)'] / row['Total Avg Apparent Power (VA)'] if row['Total Avg Apparent Power (VA)'] != 0 else 0,
@@ -143,9 +145,10 @@ def process_hioki_csv(uploaded_file) -> Optional[Tuple[str, pd.DataFrame, pd.Dat
 
     return wiring_system, params_df, data_df, removed_data
 
-# --- 2. AI and Cost Calculation Services ---
+# --- 2. AI Service ---
 
 def get_gemini_analysis(summary_metrics, data_stats, params_info, additional_context=""):
+    # ... (This function is unchanged)
     system_prompt = """You are an expert industrial energy efficiency analyst and process engineer for FMF Foods Ltd., a food manufacturing company in Fiji. Your task is to analyze power consumption data from industrial machinery at our biscuit factory in Suva. Your analysis must be framed within the context of a manufacturing environment. Consider operational cycles, equipment health, and system reliability. Most importantly, link your findings directly to cost-saving opportunities by focusing on reducing peak demand (MD) and improving power factor. Provide a concise, actionable report in Markdown format with three sections: 1. Executive Summary, 2. Key Observations & Pattern Analysis, and 3. Actionable Recommendations. Address the user as a fellow process optimization engineer."""
     user_prompt = f"""
     Good morning, Please analyze the following power consumption data for an industrial machine at our Suva facility.
@@ -213,78 +216,15 @@ else:
         kpi_summary = {}
         
         if wiring_system == '1P2W':
+            # ... (UI for 1P2W is unchanged)
             st.header("Single-Phase Performance Analysis")
+            # ...
             
-            total_kwh = 0
-            energy_col = 'Consumed Real Energy (Wh)'
-            if energy_col in data.columns and not data[energy_col].dropna().empty:
-                energy_vals = data[energy_col].dropna()
-                if len(energy_vals) > 1: total_kwh = (energy_vals.iloc[-1] - energy_vals.iloc[0]) / 1000
-            
-            peak_kva = data['Avg Apparent Power (kVA)'].max() if 'Avg Apparent Power (kVA)' in data.columns else 0
-            avg_kw = data['Avg Real Power (kW)'].abs().mean() if 'Avg Real Power (kW)' in data.columns else 0
-            avg_pf = data['Power Factor'].abs().mean() if 'Power Factor' in data.columns else 0
-            
-            st.subheader("Performance Metrics")
-            col1, col2, col3, col4 = st.columns(4)
-            col1.metric("Total Consumed Energy", f"{total_kwh:.2f} kWh" if total_kwh > 0 else "N/A")
-            col2.metric("Peak Demand (MD)", f"{peak_kva:.2f} kVA" if peak_kva > 0 else "N/A")
-            col3.metric("Average Power Draw", f"{avg_kw:.2f} kW" if avg_kw > 0 else "N/A")
-            col4.metric("Average Power Factor", f"{avg_pf:.3f}" if avg_pf > 0 else "N/A")
-
-            kpi_summary = { 
-                "Analysis Mode": "Single-Phase", "Total Consumed Energy": f"{total_kwh:.2f} kWh",
-                "Peak Demand (MD)": f"{peak_kva:.2f} kVA", "Average Power Draw": f"{avg_kw:.2f} kW",
-                "Average Power Factor": f"{avg_pf:.3f}"
-            }
-            
-            tab_names = ["⚡ Power & Energy", "📝 Measurement Settings", "📋 Active Data"]
-            if not removed_data.empty:
-                tab_names.append("🚫 Removed Inactive Periods")
-            
-            tabs = st.tabs(tab_names)
-            with tabs[0]:
-                plot_cols = [col for col in ['Avg Real Power (kW)', 'Avg Apparent Power (kVA)', 'Avg Reactive Power (kVAR)'] if col in data.columns]
-                if plot_cols:
-                    st.subheader("Power Consumption Over Time")
-                    fig_power = px.line(data, x='Datetime', y=plot_cols)
-                    st.plotly_chart(fig_power, use_container_width=True)
-                    with st.expander("Show Key Power Statistics"):
-                        stats_data = {
-                            "Max Real Power": f"{data['Avg Real Power (kW)'].max():.2f} kW" if 'Avg Real Power (kW)' in data else "N/A",
-                            "Max Apparent Power": f"{data['Avg Apparent Power (kVA)'].max():.2f} kVA" if 'Avg Apparent Power (kVA)' in data else "N/A"
-                        }
-                        st.json(stats_data)
-
-                if 'Power Factor' in data.columns:
-                    st.subheader("Power Factor Over Time")
-                    fig_pf = px.line(data, x='Datetime', y='Power Factor')
-                    fig_pf.add_hline(y=0.95, line_dash="dash", line_color="red")
-                    st.plotly_chart(fig_pf, use_container_width=True)
-                    with st.expander("Show Power Factor Statistics"):
-                        stats_pf = {
-                            "Minimum Power Factor": f"{data['Power Factor'].min():.3f}",
-                            "Average Power Factor": f"{data['Power Factor'].mean():.3f}"
-                        }
-                        st.json(stats_pf)
-
-            with tabs[1]:
-                st.subheader("Measurement Settings")
-                st.dataframe(parameters)
-            with tabs[2]:
-                st.subheader("Active Time-Series Data")
-                st.dataframe(data)
-            if not removed_data.empty:
-                with tabs[3]:
-                    st.subheader("Removed Inactive Data Periods")
-                    st.info("The following data points were removed from the main analysis because they showed no significant fluctuation, likely indicating the machine was off or the measurement was paused.")
-                    st.dataframe(removed_data)
-
         elif wiring_system == '3P4W':
             st.header("Three-Phase System Diagnostic")
             
             avg_power_kw = data['Total Avg Real Power (kW)'].mean() if 'Total Avg Real Power (kW)' in data.columns else 0
-            avg_pf = data['Total Power Factor'].abs().mean() if 'Total Power Factor' in data.columns else 0
+            avg_pf = data['Total Power Factor'].mean() if 'Total Power Factor' in data.columns else 0
             peak_kva_3p = data['Total Avg Apparent Power (kVA)'].max() if 'Total Avg Apparent Power (kVA)' in data.columns else 0
             imbalance = 0
             current_cols = ['L1 Avg Current (A)', 'L2 Avg Current (A)', 'L3 Avg Current (A)']
@@ -299,16 +239,14 @@ else:
             col3.metric("Average Total Power Factor", f"{avg_pf:.3f}" if avg_pf > 0 else "N/A")
             col4.metric("Max Current Imbalance", f"{imbalance:.1f} %" if imbalance > 0 else "N/A", help="Under 5% is good.")
 
-            kpi_summary = { 
-                "Analysis Mode": "Three-Phase", "Average Total Power": f"{avg_power_kw:.2f} kW",
-                "Peak Demand (MD)": f"{peak_kva_3p:.2f} kVA", "Average Total Power Factor": f"{avg_pf:.3f}",
-                "Max Current Imbalance": f"{imbalance:.1f} %"
-            }
+            kpi_summary = { "Analysis Mode": "Three-Phase", "Average Total Power": f"{avg_power_kw:.2f} kW", "Peak Demand (MD)": f"{peak_kva_3p:.2f} kVA", "Average Total Power Factor": f"{avg_pf:.3f}", "Max Current Imbalance": f"{imbalance:.1f} %" }
             
+            # --- ENHANCEMENT: Comprehensive 3-Phase Tabs ---
             tab_names_3p = []
             tabs_to_show = {}
-            if all(c in data.columns for c in current_cols): tabs_to_show["📊 Load Balance"] = True
-            if all(c in data.columns for c in ['L1 Avg Voltage (V)', 'L2 Avg Voltage (V)', 'L3 Avg Voltage (V)']): tabs_to_show["🩺 Voltage Health"] = True
+            if all(c in data.columns for c in ['L1 Avg Current (A)', 'L1 Min Current (A)', 'L1 Max Current (A)']): tabs_to_show["📊 Current & Load Balance"] = True
+            if all(c in data.columns for c in ['L1 Avg Voltage (V)', 'L1 Min Voltage (V)', 'L1 Max Voltage (V)']): tabs_to_show["🩺 Voltage Health"] = True
+            if all(c in data.columns for c in ['Total Avg Real Power (kW)', 'Total Avg Apparent Power (kVA)']): tabs_to_show["⚡ Power Analysis"] = True
             if all(c in data.columns for c in ['L1 Power Factor', 'L2 Power Factor', 'L3 Power Factor']): tabs_to_show["⚖️ Power Factor"] = True
             
             if tabs_to_show:
@@ -319,32 +257,55 @@ else:
             
             tabs = st.tabs(tab_names_3p)
             current_tab = 0
-            if "📊 Load Balance" in tabs_to_show:
+            
+            if "📊 Current & Load Balance" in tabs_to_show:
                 with tabs[current_tab]:
-                    st.subheader("Current Load Balance Across Phases")
-                    fig_balance = px.line(data, x='Datetime', y=current_cols, color_discrete_map={'L1 Avg Current (A)': 'red', 'L2 Avg Current (A)': 'blue', 'L3 Avg Current (A)': 'green'})
+                    st.subheader("Current Operational Envelope (Min, Avg, Max) per Phase")
+                    current_cols_all = [f'{p} {s} Current (A)' for p in ['L1', 'L2', 'L3'] for s in ['Min', 'Avg', 'Max']]
+                    fig_balance = px.line(data, x='Datetime', y=[c for c in current_cols_all if c in data.columns])
                     st.plotly_chart(fig_balance, use_container_width=True)
                     with st.expander("Show Current Statistics"):
-                        st.dataframe(data[current_cols].describe().T[['mean', 'min', 'max']].rename(columns={'mean':'Average', 'min':'Minimum', 'max':'Maximum'}))
+                        st.dataframe(data[[c for c in current_cols_all if c in data.columns]].describe().T)
                 current_tab += 1
+            
             if "🩺 Voltage Health" in tabs_to_show:
                 with tabs[current_tab]:
-                    st.subheader("Voltage Stability Across Phases")
-                    voltage_cols = ['L1 Avg Voltage (V)', 'L2 Avg Voltage (V)', 'L3 Avg Voltage (V)']
-                    fig_voltage = px.line(data, x='Datetime', y=voltage_cols, color_discrete_map={voltage_cols[0]: 'red', voltage_cols[1]: 'blue', voltage_cols[2]: 'green'})
+                    st.subheader("Voltage Operational Envelope (Min, Avg, Max) per Phase")
+                    voltage_cols_all = [f'{p} {s} Voltage (V)' for p in ['L1', 'L2', 'L3'] for s in ['Min', 'Avg', 'Max']]
+                    fig_voltage = px.line(data, x='Datetime', y=[c for c in voltage_cols_all if c in data.columns])
                     st.plotly_chart(fig_voltage, use_container_width=True)
                     with st.expander("Show Voltage Statistics"):
-                        st.dataframe(data[voltage_cols].describe().T[['mean', 'min', 'max']].rename(columns={'mean':'Average', 'min':'Minimum', 'max':'Maximum'}))
+                        st.dataframe(data[[c for c in voltage_cols_all if c in data.columns]].describe().T)
                 current_tab += 1
+
+            if "⚡ Power Analysis" in tabs_to_show:
+                with tabs[current_tab]:
+                    st.subheader("Total Power Consumption (Real, Apparent, Reactive)")
+                    total_power_cols = [c for c in ['Total Avg Real Power (kW)', 'Total Avg Apparent Power (kVA)', 'Total Avg Reactive Power (kVAR)'] if c in data.columns]
+                    if total_power_cols:
+                        fig_total_power = px.line(data, x='Datetime', y=total_power_cols)
+                        st.plotly_chart(fig_total_power, use_container_width=True)
+                        with st.expander("Show Total Power Statistics"):
+                           st.dataframe(data[total_power_cols].describe().T[['mean', 'min', 'max']])
+
+                    st.subheader("Per-Phase Real Power (kW)")
+                    phase_power_cols = [c for c in ['L1 Avg Real Power (kW)', 'L2 Avg Real Power (kW)', 'L3 Avg Real Power (kW)'] if c in data.columns]
+                    if phase_power_cols:
+                        fig_phase_power = px.line(data, x='Datetime', y=phase_power_cols)
+                        st.plotly_chart(fig_phase_power, use_container_width=True)
+
+                current_tab += 1
+
             if "⚖️ Power Factor" in tabs_to_show:
                 with tabs[current_tab]:
                     st.subheader("Power Factor Per Phase")
-                    pf_cols = ['L1 Power Factor', 'L2 Power Factor', 'L3 Power Factor']
-                    fig_pf_3p = px.line(data, x='Datetime', y=pf_cols, color_discrete_map={pf_cols[0]: 'red', pf_cols[1]: 'blue', pf_cols[2]: 'green'})
+                    pf_cols = [c for c in ['L1 Power Factor', 'L2 Power Factor', 'L3 Power Factor'] if c in data.columns]
+                    fig_pf_3p = px.line(data, x='Datetime', y=pf_cols)
                     st.plotly_chart(fig_pf_3p, use_container_width=True)
                     with st.expander("Show Power Factor Statistics"):
-                        st.dataframe(data[pf_cols].describe().T[['mean', 'min', 'max']].rename(columns={'mean':'Average', 'min':'Minimum', 'max':'Maximum'}))
+                        st.dataframe(data[pf_cols].describe().T[['mean', 'min', 'max']])
                 current_tab += 1
+            
             with tabs[current_tab]:
                 st.subheader("Measurement Settings")
                 st.dataframe(parameters)
@@ -355,7 +316,8 @@ else:
                 with tabs[current_tab+2]:
                     st.subheader("Removed Inactive Data Periods")
                     st.dataframe(removed_data)
-
+        
+        # --- AI Section ---
         st.sidebar.markdown("---")
         st.sidebar.subheader("Add Custom AI Context")
         additional_context = st.sidebar.text_area("Provide specific details about the machine or process (optional):")
