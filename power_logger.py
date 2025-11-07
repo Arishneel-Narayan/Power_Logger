@@ -223,47 +223,33 @@ def generate_trend_summary(data: pd.DataFrame, wiring_system: str) -> str:
     )
     return summary
 
-def generate_statistical_summary(data: pd.DataFrame, wiring_system: str) -> str:
-    """Generates a structured statistical summary of the most important columns."""
+def generate_transform_summary(file_name: str, data_raw: pd.DataFrame, data_clean: pd.DataFrame) -> str:
+    """Generates a log of all data transformations performed."""
     summary_lines = []
+    summary_lines.append(f"- Loaded file: `{file_name}` with {len(data_raw)} total rows.")
     
-    # Define columns of interest
-    cols_of_interest = []
-    if wiring_system == '3P4W':
-        cols_of_interest = [
-            'Total Avg Real Power (kW)', 'Total Avg Apparent Power (kVA)', 'Total Power Factor',
-            'L1 Avg Current (A)', 'L2 Avg Current (A)', 'L3 Avg Current (A)',
-            'L1 Avg Voltage (V)', 'L2 Avg Voltage (V)', 'L3 Avg Voltage (V)'
-        ]
-    elif wiring_system == '1P2W':
-        cols_of_interest = [
-            'Avg Real Power (kW)', 'Avg Apparent Power (kVA)', 'Power Factor',
-            'Avg Current (A)', 'Avg Voltage (V)'
-        ]
-
-    for col in cols_of_interest:
-        if col in data.columns and not data[col].empty:
-            try:
-                stats = data[col].describe()
-                line = (
-                    f"**{col}:** "
-                    f"Mean={stats['mean']:.2f}, "
-                    f"Min={stats['min']:.2f}, "
-                    f"Max={stats['max']:.2f}, "
-                    f"StdDev={stats['std']:.2f}"
-                )
-                summary_lines.append(f"- {line}")
-            except Exception:
-                # Skip if stats fail for any reason
-                pass
-                
-    if not summary_lines:
-        return "No detailed statistics could be generated for key metrics."
+    rows_dropped = len(data_raw) - len(data_clean)
+    if rows_dropped > 0:
+        summary_lines.append(f"- **Filtered out {rows_dropped} rows** with non-zero or error status codes (e.g., 'ERR').")
+        summary_lines.append(f"- **Analysis is based on the remaining {len(data_clean)} 'Status=0' data rows.**")
+    else:
+        summary_lines.append("- All rows had Status=0 and are included in the analysis.")
         
+    summary_lines.append("- Converted all power (W, VA, VAR) units to kilo-units (kW, kVA, kVAR).")
+    summary_lines.append("- Calculated 'Total' power/PF columns if they were not present in the file.")
+    summary_lines.append("- Ensured all power and power factor values are positive (absolute value).")
+    
     return "\n".join(summary_lines)
 
-def get_gemini_analysis(summary_metrics, detailed_stats, trend_summary, params_info, additional_context=""):
+def get_gemini_analysis(summary_metrics: str, 
+                        clean_stats: str, 
+                        raw_stats: str, 
+                        trend_summary: str, 
+                        params_info: str, 
+                        transform_log: str, 
+                        additional_context: str = "") -> str:
     """Contacts the Gemini API for an expert analysis."""
+    
     system_prompt = """You are an expert industrial energy efficiency analyst and process engineer for FMF Foods Ltd., a food manufacturing company in Fiji. Your task is to analyze power consumption data from industrial machinery at our biscuit factory in Suva. Your analysis must be framed within the context of a manufacturing environment.
     Consider the following core principles:
     - **Operational Cycles:** You MUST use the 'Summary of Trends & Fluctuations' to understand the operational sequence (e.g., start-up, peak load, idle time) and correlate it with the detailed statistics.
@@ -274,13 +260,38 @@ def get_gemini_analysis(summary_metrics, detailed_stats, trend_summary, params_i
     
     user_prompt = f"""
     Good morning, Please analyze the following power consumption data for an industrial machine at our Suva facility.
-    **Key Performance Indicators:**\n{summary_metrics}
-    **Summary of Trends & Fluctuations:**\n{trend_summary}
-    **Detailed Statistical Summary (Key Metrics):**\n{detailed_stats}
-    **Measurement Parameters:**\n{params_info}
+    
+    To help your analysis, I am providing two sets of statistics: one from the **ORIGINAL RAW FILE** (which includes errors) and one from the **CLEANED (Status=0) DATA**, which is used for all graphs and KPIs.
+
+    **Data Transformation Log:**
+    {transform_log}
+    
+    ---
+    **ANALYSIS OF CLEANED (Status=0) DATA:**
+    ---
+    
+    **Key Performance Indicators (from Cleaned Data):**
+    {summary_metrics}
+    
+    **Summary of Trends & Fluctuations (from Cleaned Data):**
+    {trend_summary}
+    
+    **Full Statistical Summary (from Cleaned Data):**
+    {clean_stats}
+    
+    ---
+    **CONTEXTUAL DATA (Do Not Use for KPIs):**
+    ---
+    
+    **Full Statistical Summary of ORIGINAL RAW FILE (for context, includes errors):**
+    {raw_stats}
+    
+    **Measurement Parameters:**
+    {params_info}
     """
+    
     if additional_context:
-        user_prompt += f"**Additional Engineer's Context:**\n{additional_context}"
+        user_prompt += f"\n**Additional Engineer's Context:**\n{additional_context}"
     user_prompt += "\nBased on all this information, please generate a report with your insights and recommendations for process optimization."
     
     try:
@@ -651,14 +662,29 @@ else:
                 st.sidebar.error("Cannot run analysis on an empty dataset. Widen your time filter.")
             else:
                 with st.spinner("🧠 AI is analyzing the data... This may take a moment."):
+                    # 1. KPIs from clean, filtered data
                     summary_metrics_text = "\n".join([f"- {key}: {value}" for key, value in kpi_summary.items() if "N/A" not in str(value)])
+                    # 2. Trend from clean, filtered data
                     trend_summary_text = generate_trend_summary(data, wiring_system)
-                    # --- NEW STATS CALL ---
-                    data_stats_text = generate_statistical_summary(data, wiring_system)
-                    # --- END NEW STATS CALL ---
+                    # 3. Full stats from clean, filtered data (all numeric columns)
+                    clean_stats_text = data.describe().to_string()
+                    # 4. Measurement settings
                     params_info_text = parameters.to_string()
+                    # 5. Transformation Log
+                    transform_log_text = generate_transform_summary(uploaded_file.name, data_raw, data_full)
+                    # 6. Full stats from the original raw file (all numeric columns)
+                    raw_stats_text = data_raw.describe().to_string()
+
                     
-                    ai_response = get_gemini_analysis(summary_metrics_text, data_stats_text, trend_summary_text, params_info_text, additional_context)
+                    ai_response = get_gemini_analysis(
+                        summary_metrics_text, 
+                        clean_stats_text,
+                        raw_stats_text,
+                        trend_summary_text, 
+                        params_info_text, 
+                        transform_log_text,
+                        additional_context
+                    )
                     st.session_state['ai_analysis'] = ai_response
 
         if 'ai_analysis' in st.session_state:
