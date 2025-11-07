@@ -349,7 +349,7 @@ def get_gemini_analysis(summary_metrics: str,
         return "Error: Gemini API key not found. Please add it to your Streamlit Secrets."
     
     # --- MODEL FIX (v1 endpoint for gemini-1.0-pro) ---
-    api_url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.0-pro:generateContent?key={api_key}"
+    api_url = f"https.generativelanguage.googleapis.com/v1/models/gemini-1.0-pro:generateContent?key={api_key}"
     # --- END FIX ---
     
     # --- PAYLOAD FIX (No 'systemInstruction' for v1) ---
@@ -387,7 +387,9 @@ def get_gemini_analysis(summary_metrics: str,
         
     except requests.exceptions.HTTPError as http_err:
         return f"HTTP error occurred: {http_err} - {response.text}"
-    except requests.exceptions.RequestException as req_.err:
+    # --- SYNTAX ERROR FIX ---
+    except requests.exceptions.RequestException as req_err:
+    # --- END FIX ---
         return f"A network error occurred: {req_err}"
     except Exception as e:
         return f"An unexpected error occurred while contacting the AI: {e}"
@@ -526,7 +528,7 @@ else:
                     with st.expander("Show Power Factor Statistics"):
                         stats_pf = {
                             "Minimum Power Factor": f"{data['Power Factor'].min():.3f}",
-                            "Average Power Factor": f"{data['Power Factor'].mean():.3f}"
+                            "Average Power Factor": f"{data['PowerFactor'].mean():.3f}"
                         }
                         st.json(stats_pf)
 
