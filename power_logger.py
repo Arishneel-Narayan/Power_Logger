@@ -348,19 +348,14 @@ def get_gemini_analysis(summary_metrics: str,
     except (KeyError, FileNotFoundError):
         return "Error: Gemini API key not found. Please add it to your Streamlit Secrets."
     
-    # --- MODEL FIX (https:// + v1 endpoint for gemini-1.0-pro) ---
-    api_url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.0-pro:generateContent?key={api_key}"
+    # --- MODEL FIX (Use user-requested gemini-2.5-pro on v1beta endpoint) ---
+    api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key={api_key}"
     # --- END FIX ---
     
-    # --- PAYLOAD FIX (No 'systemInstruction' for v1) ---
-    # We "fake" the system prompt by putting it as the first 'model' turn.
-    # The API will see this and adopt the persona, then respond to the 'user' turn.
+    # --- PAYLOAD FIX (Use 'systemInstruction' for v1beta) ---
     payload = {
-        "contents": [
-            {"role": "user", "parts": [{"text": system_prompt}]},
-            {"role": "model", "parts": [{"text": "Understood. I am ready to analyze the power consumption data from Suva. Please provide the data briefing."}]},
-            {"role": "user", "parts": [{"text": user_prompt}]}
-        ]
+        "contents": [{"parts": [{"text": user_prompt}]}],
+        "systemInstruction": {"parts": [{"text": system_prompt}]}
     }
     # --- END FIX ---
     
@@ -387,9 +382,7 @@ def get_gemini_analysis(summary_metrics: str,
         
     except requests.exceptions.HTTPError as http_err:
         return f"HTTP error occurred: {http_err} - {response.text}"
-    # --- SYNTAX ERROR FIX ---
     except requests.exceptions.RequestException as req_err:
-    # --- END FIX ---
         return f"A network error occurred: {req_err}"
     except Exception as e:
         return f"An unexpected error occurred while contacting the AI: {e}"
