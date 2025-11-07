@@ -282,7 +282,8 @@ def get_gemini_analysis(summary_metrics, data_stats, trend_summary, params_info,
 # --- 3. Streamlit UI and Analysis Section ---
 st.set_page_config(layout="wide", page_title="FMF Power Consumption Analysis")
 st.title("⚡ FMF Power Consumption Analysis Dashboard")
-st.markdown(f"**Suva, Fiji** | {pd.Timestamp.now(tz='Pacific/Fiji').strftime('%A, %d %B %Y')}")
+# Updated date format to match request
+st.markdown(f"**Suva, Fiji** | {pd.Timestamp.now(tz='Pacific/Fiji').strftime('%a %d %b %Y')}")
 
 st.sidebar.header("Upload Data")
 uploaded_file = st.sidebar.file_uploader("Upload a raw CSV from your Hioki Power Analyzer", type=["csv"])
@@ -318,7 +319,8 @@ else:
                 min_value=min_ts.to_pydatetime(), 
                 max_value=max_ts.to_pydatetime(),
                 value=(min_ts.to_pydatetime(), max_ts.to_pydatetime()),
-                format="DD/MM/YY - HH:mm"
+                # Updated slider format to match request
+                format="%a %d %b %Y - %H:%M"
             )
             # This line re-filters 'data' every time the slider moves
             data = data_full[(data_full['Datetime'] >= start_time) & (data_full['Datetime'] <= end_time)].copy()
@@ -428,7 +430,8 @@ else:
                 st.info("Select a specific day to generate a detailed 24-hour subplot of all key electrical parameters. This is essential for comparing shift performance or analyzing specific production runs.")
                 # Use data_full so the selectbox has all possible days
                 unique_days = data_full['Datetime'].dt.date.unique()
-                selected_day = st.selectbox("Select a day for detailed analysis:", options=unique_days, format_func=lambda d: d.strftime('%A, %d %B %Y'))
+                # Updated selectbox format to match request
+                selected_day = st.selectbox("Select a day for detailed analysis:", options=unique_days, format_func=lambda d: d.strftime('%a %d %b %Y'))
                 
                 if selected_day:
                     # Filter from data_full to get the specific day's data
@@ -444,25 +447,10 @@ else:
                             for stat in ['Min', 'Avg', 'Max']:
                                 col = f'L{i} {stat} Voltage (V)'
                                 if col in daily_data.columns:
-                                    fig.add_trace(go.Scatter(x=daily_data['Datetime'], y=daily_data[col], name=col, mode='lines'), row=1, col=1)
-                        # Current
-                        for i in range(1, 4):
-                            for stat in ['Min', 'Avg', 'Max']:
-                                col = f'L{i} {stat} Current (A)'
-                                if col in daily_data.columns:
-                                    fig.add_trace(go.Scatter(x=daily_data['Datetime'], y=daily_data[col], name=col, mode='lines'), row=2, col=1)
-                        # Real Power
-                        for i in range(1, 4):
-                            col = f'L{i} Avg Real Power (kW)'
-                            if col in daily_data.columns:
-                                fig.add_trace(go.Scatter(x=daily_data['Datetime'], y=daily_data[col], name=col, mode='lines'), row=3, col=1)
-                        # Power Factor
-                        for i in range(1, 4):
-                            col = f'L{i} Power Factor'
-                            if col in daily_data.columns:
-                                fig.add_trace(go.Scatter(x=daily_data['Datetime'], y=daily_data[col], name=col, mode='lines'), row=4, col=1)
+                                    fig.add_trace(go.Scatter(x=daily_data['Datetime'], y=daily_data[col], name=col, mode='lines'), row=4, col=1)
 
-                        fig.update_layout(height=1000, title_text=f"Full Operational Breakdown for {selected_day.strftime('%d %B %Y')}")
+                        # Updated chart title format to match request
+                        fig.update_layout(height=1000, title_text=f"Full Operational Breakdown for {selected_day.strftime('%a %d %b %Y')}")
                         st.plotly_chart(fig, use_container_width=True)
             
             # The rest of the tabs use the time-filtered 'data'
