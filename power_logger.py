@@ -348,15 +348,21 @@ def get_gemini_analysis(summary_metrics: str,
     except (KeyError, FileNotFoundError):
         return "Error: Gemini API key not found. Please add it to your Streamlit Secrets."
     
-    # --- MODEL FIX ---
-    # Use v1 endpoint for the gemini-pro model
+    # --- MODEL FIX (v1 endpoint for gemini-pro) ---
     api_url = f"https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent?key={api_key}"
     # --- END FIX ---
     
+    # --- PAYLOAD FIX (No 'systemInstruction' for v1) ---
+    # We "fake" the system prompt by putting it as the first 'model' turn.
+    # The API will see this and adopt the persona, then respond to the 'user' turn.
     payload = {
-        "contents": [{"parts": [{"text": user_prompt}]}],
-        "systemInstruction": {"parts": [{"text": system_prompt}]}
+        "contents": [
+            {"role": "user", "parts": [{"text": system_prompt}]},
+            {"role": "model", "parts": [{"text": "Understood. I am ready to analyze the power consumption data from Suva. Please provide the data briefing."}]},
+            {"role": "user", "parts": [{"text": user_prompt}]}
+        ]
     }
+    # --- END FIX ---
     
     try:
         response = requests.post(api_url, json=payload, timeout=120)
