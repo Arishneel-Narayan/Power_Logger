@@ -241,9 +241,61 @@ def generate_transform_summary(file_name: str, data_raw: pd.DataFrame, data_clea
     
     return "\n".join(summary_lines)
 
+# --- NEW, MORE POWERFUL AI BRIEFING FUNCTION ---
+def generate_detailed_analysis_text(data: pd.DataFrame, wiring_system: str) -> str:
+    """
+    Generates a structured statistical summary, including trends,
+    for the most important columns to send to the AI.
+    """
+    if data.empty:
+        return "No data available for statistical analysis."
+        
+    summary_lines = []
+    
+    # Define columns of interest
+    cols_of_interest = []
+    if wiring_system == '3P4W':
+        cols_of_interest = [
+            'Total Avg Real Power (kW)', 'Total Avg Apparent Power (kVA)', 'Total Power Factor',
+            'L1 Avg Current (A)', 'L2 Avg Current (A)', 'L3 Avg Current (A)',
+            'L1 Avg Voltage (V)', 'L2 Avg Voltage (V)', 'L3 Avg Voltage (V)'
+        ]
+    elif wiring_system == '1P2W':
+        cols_of_interest = [
+            'Avg Real Power (kW)', 'Avg Apparent Power (kVA)', 'Power Factor',
+            'Avg Current (A)', 'Avg Voltage (V)'
+        ]
+
+    for col in cols_of_interest:
+        if col in data.columns and not data[col].dropna().empty:
+            try:
+                stats = data[col].describe()
+                
+                # Get trend data
+                first_val = data[col].iloc[0]
+                last_val = data[col].iloc[-1]
+                trend_val = last_val - first_val
+                
+                line = (
+                    f"**{col}:** "
+                    f"Mean={stats['mean']:.2f}, "
+                    f"Min={stats['min']:.2f}, "
+                    f"Max={stats['max']:.2f}, "
+                    f"StdDev={stats['std']:.2f}, "
+                    f"**Trend={trend_val:+.2f}** (Start={first_val:.2f}, End={last_val:.2f})"
+                )
+                summary_lines.append(f"- {line}")
+            except Exception:
+                # Skip if stats fail for any reason
+                pass
+                
+    if not summary_lines:
+        return "No detailed statistics could be generated for key metrics."
+        
+    return "\n".join(summary_lines)
+
 def get_gemini_analysis(summary_metrics: str, 
-                        clean_stats: str, 
-                        raw_stats: str, 
+                        detailed_stats_and_trends: str, 
                         trend_summary: str, 
                         params_info: str, 
                         transform_log: str, 
@@ -251,18 +303,22 @@ def get_gemini_analysis(summary_metrics: str,
     """Contacts the Gemini API for an expert analysis."""
     
     system_prompt = """You are an expert industrial energy efficiency analyst and process engineer for FMF Foods Ltd., a food manufacturing company in Fiji. Your task is to analyze power consumption data from industrial machinery at our biscuit factory in Suva. Your analysis must be framed within the context of a manufacturing environment.
-    Consider the following core principles:
-    - **Operational Cycles:** You MUST use the 'Summary of Trends & Fluctuations' to understand the operational sequence (e.g., start-up, peak load, idle time) and correlate it with the detailed statistics.
-    - **Equipment Health:** Interpret electrical data as indicators of mechanical health. Use the 'Detailed Statistical Summary' to understand the magnitude and volatility of loads.
+    Your analysis MUST be based SOLELY on the 'CLEANED (Status=0) DATA'.
+    
+    Core Principles:
+    - **Operational Cycles:** Use the 'Summary of Trends & Fluctuations' to understand the *main* power sequence.
+    - **Pattern Analysis:** Use the 'Detailed Stats & Trends' section to analyze the specific behavior of *each* key metric (Voltage, Current, PF). Look for correlations, e.g., "Current on L1 increased, causing a voltage dip on L1."
+    - **Equipment Health:** Interpret electrical data as indicators of mechanical health. Use the 'Detailed Stats & Trends' to understand the magnitude (Mean), volatility (StdDev), and load profiles (Trend).
     - **Cost Reduction:** Link your findings directly to cost-saving opportunities by focusing on reducing peak demand (MD) and improving power factor.
-    - **Quantitative Significance:** When analyzing percentage-based metrics (like current imbalance), you MUST refer to the absolute values in the 'Detailed Statistical Summary' to determine the real-world impact.
+    - **Quantitative Significance:** When analyzing metrics, you MUST refer to the absolute values in the 'Detailed Stats & Trends' to determine the real-world impact.
+    
     Provide a concise, actionable report in Markdown format with three sections: 1. Executive Summary, 2. Key Observations & Pattern Analysis, and 3. Actionable Recommendations. Address the user as a fellow process optimization engineer."""
     
     user_prompt = f"""
     Good morning, Please analyze the following power consumption data for an industrial machine at our Suva facility.
     
-    To help your analysis, I am providing two sets of statistics: one from the **ORIGINAL RAW FILE** (which includes errors) and one from the **CLEANED (Status=0) DATA**, which is used for all graphs and KPIs.
-
+    This briefing contains data from the CLEANED (Status=0) file.
+    
     **Data Transformation Log:**
     {transform_log}
     
@@ -273,18 +329,11 @@ def get_gemini_analysis(summary_metrics: str,
     **Key Performance Indicators (from Cleaned Data):**
     {summary_metrics}
     
-    **Summary of Trends & Fluctuations (from Cleaned Data):**
+    **Narrative Trend Summary (Main Power Metric):**
     {trend_summary}
     
-    **Full Statistical Summary (from Cleaned Data):**
-    {clean_stats}
-    
-    ---
-    **CONTEXTUAL DATA (Do Not Use for KPIs):**
-    ---
-    
-    **Full Statistical Summary of ORIGINAL RAW FILE (for context, includes errors):**
-    {raw_stats}
+    **Detailed Stats & Trends (All Key Metrics):**
+    {detailed_stats_and_trends}
     
     **Measurement Parameters:**
     {params_info}
@@ -666,20 +715,17 @@ else:
                     summary_metrics_text = "\n".join([f"- {key}: {value}" for key, value in kpi_summary.items() if "N/A" not in str(value)])
                     # 2. Trend from clean, filtered data
                     trend_summary_text = generate_trend_summary(data, wiring_system)
-                    # 3. Full stats from clean, filtered data (all numeric columns)
-                    clean_stats_text = data.describe().to_string()
+                    # 3. NEW: Detailed stats AND trends from clean, filtered data
+                    detailed_stats_text = generate_detailed_analysis_text(data, wiring_system)
                     # 4. Measurement settings
                     params_info_text = parameters.to_string()
                     # 5. Transformation Log
                     transform_log_text = generate_transform_summary(uploaded_file.name, data_raw, data_full)
-                    # 6. Full stats from the original raw file (all numeric columns)
-                    raw_stats_text = data_raw.describe().to_string()
 
                     
                     ai_response = get_gemini_analysis(
                         summary_metrics_text, 
-                        clean_stats_text,
-                        raw_stats_text,
+                        detailed_stats_text,
                         trend_summary_text, 
                         params_info_text, 
                         transform_log_text,
