@@ -77,8 +77,8 @@ def get_rename_map(wiring_system: str) -> dict:
 @st.cache_data
 def load_hioki_data(uploaded_file):
     """
-    Main data processing pipeline. Correctly parses dates, filters for Status=0,
-    handles negative values, and returns the full, unfiltered dataset.
+    Main data processing pipeline. Correctly parses dates, handles negative values,
+    and returns the full, unfiltered dataset.
     This function is cached for performance.
     """
     try:
@@ -123,22 +123,6 @@ def load_hioki_data(uploaded_file):
     except Exception as e:
         st.error(f"Error parsing the main data table: {e}")
         return None
-    
-    # --- STATUS FILTER (NEW) ---
-    original_row_count = len(data_df)
-    if 'Status' in data_df.columns:
-        # Coerce to numeric, turning 'ERR' codes into NaN. Handles '0', '0.0', '00000000'
-        data_df['Status_Numeric'] = pd.to_numeric(data_df['Status'], errors='coerce')
-        # Filter for rows where status is exactly 0
-        data_df = data_df[data_df['Status_Numeric'] == 0].copy()
-        
-        filtered_row_count = len(data_df)
-        rows_dropped = original_row_count - filtered_row_count
-        if rows_dropped > 0:
-            st.sidebar.info(f"Filtered out {rows_dropped} rows with non-zero status codes.")
-    else:
-        st.sidebar.warning("Could not find 'Status' column. Unable to filter by status code.")
-    # --- END FILTER ---
         
     data_df = data_df.rename(columns=ts_rename_map)
     
@@ -154,13 +138,13 @@ def load_hioki_data(uploaded_file):
     data_df.dropna(subset=['Datetime'], inplace=True)
     # --- END FIX ---
 
-    identifier_cols_to_check = ['Datetime', 'Date', 'Etime', 'Machine Status', 'Status_Numeric']
+    identifier_cols_to_check = ['Datetime', 'Date', 'Etime', 'Machine Status']
     existing_identifiers = [col for col in identifier_cols_to_check if col in data_df.columns]
     measurement_cols = data_df.columns.drop(existing_identifiers, errors='ignore')
     data_df.dropna(subset=measurement_cols, how='all', inplace=True)
     
     if data_df.empty:
-        st.error("No valid data rows (Status=0) with measurements were found.")
+        st.error("No valid data rows with measurements were found.")
         return None
     
     data_df = data_df.sort_values(by='Datetime').reset_index(drop=True)
@@ -266,7 +250,7 @@ def get_gemini_analysis(summary_metrics, data_stats, trend_summary, params_info,
         return "Error: Gemini API key not found. Please add it to your Streamlit Secrets."
     
     # Use the newer gemini-1.5-flash-latest model
-    api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key={api_key}"
+    api_url = f"httpss://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key={api_key}"
     
     payload = {
         "contents": [{"parts": [{"text": user_prompt}]}],
@@ -328,11 +312,35 @@ else:
     process_result = load_hioki_data(uploaded_file)
 
     if process_result:
-        wiring_system, parameters, data_full = process_result
+        wiring_system, parameters, data_raw = process_result # Renamed to data_raw
+        
+        # --- NEW LOGIC: SEPARATE RAW FROM CLEAN ---
+        
+        # 1. Filter the raw data to create the clean analysis DataFrame
+        data_full = pd.DataFrame() # Initialize
+        
+        if 'Machine Status' in data_raw.columns:
+            # Coerce to numeric, turning 'ERR' codes into NaN. Handles '0', '0.0', '00000000'
+            data_raw['Status_Numeric'] = pd.to_numeric(data_raw['Machine Status'], errors='coerce')
+            # Filter for rows where status is exactly 0
+            data_full = data_raw[data_raw['Status_Numeric'] == 0].copy()
+            
+            rows_dropped = len(data_raw) - len(data_full)
+            if rows_dropped > 0:
+                st.sidebar.info(f"Filtered out {rows_dropped} rows with non-zero status codes for analysis.")
+            if data_full.empty:
+                st.error("No data with Status=0 was found. Cannot perform analysis.")
+                st.stop()
+        else:
+            st.sidebar.warning("Could not find 'Machine Status' column. Analyzing all data.")
+            data_full = data_raw.copy()
+        
+        # --- END NEW LOGIC ---
+            
         st.sidebar.success(f"File processed successfully!\n\n**Mode: {wiring_system} Analysis**")
         
-        if data_full is None or data_full.empty:
-            st.error("File was processed, but no valid data (Status=0) was found. Please check the file contents.")
+        if data_full.empty:
+            st.error("File was processed, but no valid data was found. Please check the file contents.")
             st.stop() # Stop execution if no data
             
         data = data_full.copy() # Make a copy for filtering
@@ -351,7 +359,7 @@ else:
                 value=(min_ts.to_pydatetime(), max_ts.to_pydatetime()),
                 format=slider_format
             )
-            # Filter the main 'data' DataFrame based on the slider
+            # Filter the main 'data' DataFrame (which is a copy of data_full)
             data = data_full[(data_full['Datetime'] >= start_time) & (data_full['Datetime'] <= end_time)].copy()
             
             if data.empty:
@@ -419,23 +427,24 @@ else:
                 st.subheader("Measurement Settings")
                 st.dataframe(parameters)
             with tabs[2]:
-                st.subheader("Full Raw Data Table")
-                # Show the full_data table, which includes all status codes
-                st.dataframe(data_full)
+                st.subheader("Full Raw Data Table (All Status Codes)")
+                # Show the original data_raw table
+                st.dataframe(data_raw)
                 
-                # Add Excel download button for 1-phase
+                # Download button downloads the CLEAN (Status=0) data_full
                 excel_data = to_excel_bytes(data_full)
                 st.download_button(
-                    label="📥 Download Data as Excel",
+                    label="📥 Download CLEAN (Status=0) Data as Excel",
                     data=excel_data,
-                    file_name=f"{uploaded_file.name.split('.')[0]}_processed.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    file_name=f"{uploaded_file.name.split('.')[0]}_processed_clean.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    help="This downloads only the data rows with Status=0, which are used for all graphs and analysis."
                 )
 
         elif wiring_system == '3P4W':
             st.header("Three-Phase System Diagnostic")
             
-            # KPIs are calculated on the time-filtered 'data'
+            # KPIs are calculated on the time-filtered 'data' (which is Status=0)
             avg_power_kw = data['Total Avg Real Power (kW)'].mean() if 'Total Avg Real Power (kW)' in data.columns else 0
             avg_pf = data['Total Power Factor'].mean() if 'Total Power Factor' in data.columns else 0
             
@@ -476,7 +485,7 @@ else:
                 st.subheader("24-Hour Operational Snapshot")
                 st.info("Select a specific day to generate a detailed 24-hour subplot of all key electrical parameters. This is essential for comparing shift performance or analyzing specific production runs.")
                 
-                # Use the full, unfiltered (but Status=0) data for day selection
+                # Use the clean, (Status=0) data_full for day selection
                 unique_days = data_full['Datetime'].dt.date.unique()
                 
                 # Use requested date format
@@ -485,6 +494,7 @@ else:
                 selected_day = st.selectbox("Select a day for detailed analysis:", options=unique_days, format_func=day_format_func)
                 
                 if selected_day:
+                    # Filter the clean data_full for the selected day
                     daily_data = data_full[data_full['Datetime'].dt.date == selected_day]
                     
                     if daily_data.empty:
@@ -526,7 +536,7 @@ else:
                         fig.update_layout(height=1000, title_text=f"Full Operational Breakdown for {selected_day.strftime('%a %d %b %Y')}", showlegend=True)
                         st.plotly_chart(fig, use_container_width=True)
             
-            # The rest of the tabs use the time-filtered 'data'
+            # The rest of the tabs use the time-filtered 'data' (which is Status=0)
             with tabs[1]:
                 st.subheader("Current Operational Envelope per Phase")
                 st.info("This chart shows the full range of current drawn by the machine on each phase, from minimum to maximum. It is crucial for identifying peak inrush currents during start-up and understanding the full load variation.")
@@ -577,17 +587,18 @@ else:
                 st.dataframe(parameters)
             
             with tabs[6]:
-                st.subheader("Full Data Table (Filtered for Status=0)")
-                # Show the data_full table (which is already filtered for Status=0)
-                st.dataframe(data_full)
+                st.subheader("Full Raw Data Table (All Status Codes)")
+                # Show the original data_raw table
+                st.dataframe(data_raw)
                 
-                # Add Excel download button for 3-phase
+                # Download button downloads the CLEAN (Status=0) data_full
                 excel_data = to_excel_bytes(data_full)
                 st.download_button(
-                    label="📥 Download Data as Excel",
+                    label="📥 Download CLEAN (Status=0) Data as Excel",
                     data=excel_data,
-                    file_name=f"{uploaded_file.name.split('.')[0]}_processed.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    file_name=f"{uploaded_file.name.split('.')[0]}_processed_clean.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    help="This downloads only the data rows with Status=0, which are used for all graphs and analysis."
                 )
         
         # --- AI Section (Common to both) ---
@@ -596,7 +607,7 @@ else:
         additional_context = st.sidebar.text_area("Provide specific details about the machine or process (optional):", help="E.g., 'This is the main dough mixer, model XYZ.' or 'The large spike at 10:00 was a planned startup.'")
 
         if st.sidebar.button("🤖 Get AI-Powered Analysis"):
-            # Use the time-filtered 'data' for the AI analysis
+            # Use the time-filtered 'data' (which is Status=0) for the AI analysis
             if data.empty:
                 st.sidebar.error("Cannot run analysis on an empty dataset. Widen your time filter.")
             else:
