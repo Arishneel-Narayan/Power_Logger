@@ -279,6 +279,18 @@ def get_gemini_analysis(summary_metrics, data_stats, trend_summary, params_info,
     except Exception as e:
         return f"An error occurred: {e}"
 
+def to_excel_bytes(df: pd.DataFrame) -> bytes:
+    """
+    Converts a DataFrame to an in-memory Excel file (bytes).
+    Requires the 'openpyxl' library.
+    """
+    output = io.BytesIO()
+    # Use 'with' block to ensure the writer is properly closed
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Power_Data')
+    # The 'with' block automatically saves the file to the buffer.
+    return output.getvalue()
+
 # --- 3. Streamlit UI and Analysis Section ---
 st.set_page_config(layout="wide", page_title="FMF Power Consumption Analysis")
 st.title("⚡ FMF Power Consumption Analysis Dashboard")
@@ -393,6 +405,24 @@ else:
                 st.dataframe(parameters)
             with tabs[2]:
                 st.subheader("Full Raw Data Table")
+
+                # --- NEW DOWNLOAD BUTTON ---
+                excel_data = to_excel_bytes(data_full)
+                # Create a dynamic file name based on the upload
+                file_name = "processed_power_data.xlsx"
+                if uploaded_file is not None:
+                    # e.g., T2.CSV -> T2_processed.xlsx
+                    file_name = f"{uploaded_file.name.split('.')[0]}_processed.xlsx"
+                
+                st.download_button(
+                    label="📥 Download Full Data as Excel",
+                    data=excel_data,
+                    file_name=file_name,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    help="Click to download the complete, processed data table (with renamed columns) as an Excel file."
+                )
+                # --- END NEW DOWNLOAD BUTTON ---
+
                 st.dataframe(data_full) # Show the full, unfiltered data
 
         elif wiring_system == '3P4W':
@@ -505,6 +535,24 @@ else:
             
             with tabs[6]:
                 st.subheader("Full Data Table")
+
+                # --- NEW DOWNLOAD BUTTON ---
+                excel_data = to_excel_bytes(data_full)
+                # Create a dynamic file name based on the upload
+                file_name = "processed_power_data.xlsx"
+                if uploaded_file is not None:
+                    # e.g., T2.CSV -> T2_processed.xlsx
+                    file_name = f"{uploaded_file.name.split('.')[0]}_processed.xlsx"
+                
+                st.download_button(
+                    label="📥 Download Full Data as Excel",
+                    data=excel_data,
+                    file_name=file_name,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    help="Click to download the complete, processed data table (with renamed columns) as an Excel file."
+                )
+                # --- END NEW DOWNLOAD BUTTON ---
+                
                 st.dataframe(data_full) # Show the full, unfiltered data
         
         # --- AI Section ---
