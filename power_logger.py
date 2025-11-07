@@ -472,15 +472,38 @@ else:
                     else:
                         fig = make_subplots(rows=4, cols=1, shared_xaxes=True, subplot_titles=("Voltage Envelope (V)", "Current Envelope (A)", "Real Power (kW)", "Power Factor"))
 
-                        # Voltage
+                        # --- FIX: Re-written plot loops ---
+
+                        # 1. Voltage -> Row 1
                         for i in range(1, 4):
                             for stat in ['Min', 'Avg', 'Max']:
                                 col = f'L{i} {stat} Voltage (V)'
                                 if col in daily_data.columns:
-                                    fig.add_trace(go.Scatter(x=daily_data['Datetime'], y=daily_data[col], name=col, mode='lines'), row=4, col=1)
+                                    fig.add_trace(go.Scatter(x=daily_data['Datetime'], y=daily_data[col], name=col, mode='lines'), row=1, col=1)
+
+                        # 2. Current -> Row 2
+                        for i in range(1, 4):
+                            for stat in ['Min', 'Avg', 'Max']:
+                                col = f'L{i} {stat} Current (A)'
+                                if col in daily_data.columns:
+                                    fig.add_trace(go.Scatter(x=daily_data['Datetime'], y=daily_data[col], name=col, mode='lines'), row=2, col=1)
+
+                        # 3. Real Power -> Row 3
+                        for i in range(1, 4):
+                            col = f'L{i} Avg Real Power (kW)'
+                            if col in daily_data.columns:
+                                fig.add_trace(go.Scatter(x=daily_data['Datetime'], y=daily_data[col], name=col, mode='lines'), row=3, col=1)
+
+                        # 4. Power Factor -> Row 4
+                        for i in range(1, 4):
+                            col = f'L{i} Power Factor'
+                            if col in daily_data.columns:
+                                fig.add_trace(go.Scatter(x=daily_data['Datetime'], y=daily_data[col], name=col, mode='lines'), row=4, col=1)
+                        
+                        # --- END OF FIX ---
 
                         # Updated chart title format to match request
-                        fig.update_layout(height=1000, title_text=f"Full Operational Breakdown for {selected_day.strftime('%a %d %b %Y')}")
+                        fig.update_layout(height=1000, title_text=f"Full Operational Breakdown for {selected_day.strftime('%a %d %b %Y')}", showlegend=True)
                         st.plotly_chart(fig, use_container_width=True)
             
             # The rest of the tabs use the time-filtered 'data'
