@@ -349,8 +349,8 @@ def get_gemini_analysis(summary_metrics: str,
         return "Error: Gemini API key not found. Please add it to your Streamlit Secrets."
     
     # --- MODEL FIX ---
-    # Use gemini-pro which is a stable, compatible model for this endpoint
-    api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={api_key}"
+    # Use v1 endpoint for the gemini-pro model
+    api_url = f"https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent?key={api_key}"
     # --- END FIX ---
     
     payload = {
