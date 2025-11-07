@@ -223,21 +223,60 @@ def generate_trend_summary(data: pd.DataFrame, wiring_system: str) -> str:
     )
     return summary
 
-def get_gemini_analysis(summary_metrics, data_stats, trend_summary, params_info, additional_context=""):
+def generate_statistical_summary(data: pd.DataFrame, wiring_system: str) -> str:
+    """Generates a structured statistical summary of the most important columns."""
+    summary_lines = []
+    
+    # Define columns of interest
+    cols_of_interest = []
+    if wiring_system == '3P4W':
+        cols_of_interest = [
+            'Total Avg Real Power (kW)', 'Total Avg Apparent Power (kVA)', 'Total Power Factor',
+            'L1 Avg Current (A)', 'L2 Avg Current (A)', 'L3 Avg Current (A)',
+            'L1 Avg Voltage (V)', 'L2 Avg Voltage (V)', 'L3 Avg Voltage (V)'
+        ]
+    elif wiring_system == '1P2W':
+        cols_of_interest = [
+            'Avg Real Power (kW)', 'Avg Apparent Power (kVA)', 'Power Factor',
+            'Avg Current (A)', 'Avg Voltage (V)'
+        ]
+
+    for col in cols_of_interest:
+        if col in data.columns and not data[col].empty:
+            try:
+                stats = data[col].describe()
+                line = (
+                    f"**{col}:** "
+                    f"Mean={stats['mean']:.2f}, "
+                    f"Min={stats['min']:.2f}, "
+                    f"Max={stats['max']:.2f}, "
+                    f"StdDev={stats['std']:.2f}"
+                )
+                summary_lines.append(f"- {line}")
+            except Exception:
+                # Skip if stats fail for any reason
+                pass
+                
+    if not summary_lines:
+        return "No detailed statistics could be generated for key metrics."
+        
+    return "\n".join(summary_lines)
+
+def get_gemini_analysis(summary_metrics, detailed_stats, trend_summary, params_info, additional_context=""):
     """Contacts the Gemini API for an expert analysis."""
     system_prompt = """You are an expert industrial energy efficiency analyst and process engineer for FMF Foods Ltd., a food manufacturing company in Fiji. Your task is to analyze power consumption data from industrial machinery at our biscuit factory in Suva. Your analysis must be framed within the context of a manufacturing environment.
     Consider the following core principles:
     - **Operational Cycles:** You MUST use the 'Summary of Trends & Fluctuations' to understand the operational sequence (e.g., start-up, peak load, idle time) and correlate it with the detailed statistics.
-    - **Equipment Health:** Interpret electrical data as indicators of mechanical health.
+    - **Equipment Health:** Interpret electrical data as indicators of mechanical health. Use the 'Detailed Statistical Summary' to understand the magnitude and volatility of loads.
     - **Cost Reduction:** Link your findings directly to cost-saving opportunities by focusing on reducing peak demand (MD) and improving power factor.
-    - **Quantitative Significance:** When analyzing percentage-based metrics (like current imbalance), you MUST refer to the absolute values in the 'Statistical Summary of Time-Series Data' to determine the real-world impact.
+    - **Quantitative Significance:** When analyzing percentage-based metrics (like current imbalance), you MUST refer to the absolute values in the 'Detailed Statistical Summary' to determine the real-world impact.
     Provide a concise, actionable report in Markdown format with three sections: 1. Executive Summary, 2. Key Observations & Pattern Analysis, and 3. Actionable Recommendations. Address the user as a fellow process optimization engineer."""
     
     user_prompt = f"""
     Good morning, Please analyze the following power consumption data for an industrial machine at our Suva facility.
     **Key Performance Indicators:**\n{summary_metrics}
     **Summary of Trends & Fluctuations:**\n{trend_summary}
-    **Statistical Summary of Time-Series Data:**\n{data_stats}
+    **Detailed Statistical Summary (Key Metrics):**\n{detailed_stats}
     **Measurement Parameters:**\n{params_info}
     """
     if additional_context:
@@ -250,7 +289,7 @@ def get_gemini_analysis(summary_metrics, data_stats, trend_summary, params_info,
         return "Error: Gemini API key not found. Please add it to your Streamlit Secrets."
     
     # Use the newer gemini-1.5-flash-latest model
-    api_url = f"httpss://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key={api_key}"
+    api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key={api_key}"
     
     payload = {
         "contents": [{"parts": [{"text": user_prompt}]}],
@@ -614,8 +653,9 @@ else:
                 with st.spinner("🧠 AI is analyzing the data... This may take a moment."):
                     summary_metrics_text = "\n".join([f"- {key}: {value}" for key, value in kpi_summary.items() if "N/A" not in str(value)])
                     trend_summary_text = generate_trend_summary(data, wiring_system)
-                    stats_cols = [col for col in data.columns if data[col].dtype in ['float64', 'int64']]
-                    data_stats_text = data[stats_cols].describe().to_string() if stats_cols else "No numeric data for statistics."
+                    # --- NEW STATS CALL ---
+                    data_stats_text = generate_statistical_summary(data, wiring_system)
+                    # --- END NEW STATS CALL ---
                     params_info_text = parameters.to_string()
                     
                     ai_response = get_gemini_analysis(summary_metrics_text, data_stats_text, trend_summary_text, params_info_text, additional_context)
