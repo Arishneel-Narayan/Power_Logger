@@ -348,8 +348,8 @@ def get_gemini_analysis(summary_metrics: str,
     except (KeyError, FileNotFoundError):
         return "Error: Gemini API key not found. Please add it to your Streamlit Secrets."
     
-    # --- MODEL FIX (v1 endpoint for gemini-pro) ---
-    api_url = f"https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent?key={api_key}"
+    # --- MODEL FIX (v1 endpoint for gemini-1.0-pro) ---
+    api_url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.0-pro:generateContent?key={api_key}"
     # --- END FIX ---
     
     # --- PAYLOAD FIX (No 'systemInstruction' for v1) ---
@@ -387,7 +387,7 @@ def get_gemini_analysis(summary_metrics: str,
         
     except requests.exceptions.HTTPError as http_err:
         return f"HTTP error occurred: {http_err} - {response.text}"
-    except requests.exceptions.RequestException as req_err:
+    except requests.exceptions.RequestException as req_.err:
         return f"A network error occurred: {req_err}"
     except Exception as e:
         return f"An unexpected error occurred while contacting the AI: {e}"
@@ -727,7 +727,7 @@ else:
                     detailed_stats_text = generate_detailed_analysis_text(data, wiring_system)
                     # 4. Measurement settings
                     params_info_text = parameters.to_string()
-                    # 5. Transformation Log
+                    # 5. Transformation Log (uses data_raw and data_full)
                     transform_log_text = generate_transform_summary(uploaded_file.name, data_raw, data_full)
 
                     
