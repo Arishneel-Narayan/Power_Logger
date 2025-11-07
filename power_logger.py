@@ -348,8 +348,10 @@ def get_gemini_analysis(summary_metrics: str,
     except (KeyError, FileNotFoundError):
         return "Error: Gemini API key not found. Please add it to your Streamlit Secrets."
     
-    # Use the newer gemini-1.5-flash-latest model
-    api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key={api_key}"
+    # --- MODEL FIX ---
+    # Use gemini-pro which is a stable, compatible model for this endpoint
+    api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={api_key}"
+    # --- END FIX ---
     
     payload = {
         "contents": [{"parts": [{"text": user_prompt}]}],
