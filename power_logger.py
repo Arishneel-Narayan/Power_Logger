@@ -505,6 +505,16 @@ else:
                     st.subheader("Power Consumption Over Time")
                     st.info("This graph shows the Real (useful work), Apparent (total supplied), and Reactive (wasted) power. Look for high Apparent or Reactive power relative to Real power, which indicates electrical inefficiency.")
                     fig_power = px.line(data, x='Datetime', y=plot_cols)
+                    
+                    # --- GRAPH FORMATTING ---
+                    fig_power.update_layout(
+                        xaxis_title="Date & Time",
+                        yaxis_title="Power (kW, kVA, kVAR)",
+                        xaxis_tickformat="%a %d %b\n%H:%M" # Day of week, date, time
+                    )
+                    fig_power.update_xaxes(showticklabels=True)
+                    # --- END FORMATTING ---
+                    
                     st.plotly_chart(fig_power, use_container_width=True)
                     with st.expander("Show Key Power Statistics"):
                         stats_data = {
@@ -517,11 +527,21 @@ else:
                     st.info("Power Factor is an efficiency score (Real Power / Apparent Power). Values below 0.95 (the red line) can lead to utility penalties and indicate wasted energy.")
                     fig_pf = px.line(data, x='Datetime', y='Power Factor')
                     fig_pf.add_hline(y=0.95, line_dash="dash", line_color="red")
+                    
+                    # --- GRAPH FORMATTING ---
+                    fig_pf.update_layout(
+                        xaxis_title="Date & Time",
+                        yaxis_title="Power Factor",
+                        xaxis_tickformat="%a %d %b\n%H:%M"
+                    )
+                    fig_pf.update_xaxes(showticklabels=True)
+                    # --- END FORMATTING ---
+                    
                     st.plotly_chart(fig_pf, use_container_width=True)
                     with st.expander("Show Power Factor Statistics"):
                         stats_pf = {
                             "Minimum Power Factor": f"{data['Power Factor'].min():.3f}",
-                            "Average Power Factor": f"{data['Power Factor'].mean():.3f}"
+                            "Average Power Factor": f"{data['PowerFactor'].mean():.3f}"
                         }
                         st.json(stats_pf)
 
@@ -602,9 +622,12 @@ else:
                     if daily_data.empty:
                         st.warning("No data found for the selected day.")
                     else:
-                        fig = make_subplots(rows=4, cols=1, shared_xaxes=True, subplot_titles=("Voltage Envelope (V)", "Current Envelope (A)", "Real Power (kW)", "Power Factor"))
+                        fig = make_subplots(
+                            rows=4, cols=1, shared_xaxes=True, 
+                            subplot_titles=("Voltage Envelope", "Current Envelope", "Real Power", "Power Factor")
+                        )
 
-                        # --- PLOTTING FIX ---
+                        # --- PLOTTING FIX & FORMATTING ---
 
                         # 1. Voltage -> Row 1
                         for i in range(1, 4):
@@ -612,6 +635,7 @@ else:
                                 col = f'L{i} {stat} Voltage (V)'
                                 if col in daily_data.columns:
                                     fig.add_trace(go.Scatter(x=daily_data['Datetime'], y=daily_data[col], name=col, mode='lines'), row=1, col=1)
+                        fig.update_yaxes(title_text="Voltage (V)", row=1, col=1)
 
                         # 2. Current -> Row 2
                         for i in range(1, 4):
@@ -619,23 +643,39 @@ else:
                                 col = f'L{i} {stat} Current (A)'
                                 if col in daily_data.columns:
                                     fig.add_trace(go.Scatter(x=daily_data['Datetime'], y=daily_data[col], name=col, mode='lines'), row=2, col=1)
+                        fig.update_yaxes(title_text="Current (A)", row=2, col=1)
 
                         # 3. Real Power -> Row 3
                         for i in range(1, 4):
                             col = f'L{i} Avg Real Power (kW)'
                             if col in daily_data.columns:
                                 fig.add_trace(go.Scatter(x=daily_data['Datetime'], y=daily_data[col], name=col, mode='lines'), row=3, col=1)
+                        fig.update_yaxes(title_text="Real Power (kW)", row=3, col=1)
 
                         # 4. Power Factor -> Row 4
                         for i in range(1, 4):
                             col = f'L{i} Power Factor'
                             if col in daily_data.columns:
                                 fig.add_trace(go.Scatter(x=daily_data['Datetime'], y=daily_data[col], name=col, mode='lines'), row=4, col=1)
+                        fig.update_yaxes(title_text="Power Factor", row=4, col=1)
                         
                         # --- END FIX ---
 
                         # Updated chart title format to match request
-                        fig.update_layout(height=1000, title_text=f"Full Operational Breakdown for {selected_day.strftime('%a %d %b %Y')}", showlegend=True)
+                        fig.update_layout(
+                            height=1000, 
+                            title_text=f"Full Operational Breakdown for {selected_day.strftime('%a %d %b %Y')}", 
+                            showlegend=True
+                        )
+                        # Apply x-axis formatting
+                        fig.update_xaxes(
+                            tickformat="%H:%M", # Show HH:MM for daily breakdown
+                            showticklabels=True,
+                            row=4, col=1, # Apply to bottom axis
+                            title_text="Time of Day"
+                        )
+                        # --- END FORMATTING ---
+                        
                         st.plotly_chart(fig, use_container_width=True)
             
             # The rest of the tabs use the time-filtered 'data' (which is Status=0)
@@ -646,6 +686,16 @@ else:
                 plot_cols = [c for c in current_cols_all if c in data.columns]
                 if plot_cols:
                     fig = px.line(data, x='Datetime', y=plot_cols)
+                    
+                    # --- GRAPH FORMATTING ---
+                    fig.update_layout(
+                        xaxis_title="Date & Time",
+                        yaxis_title="Current (A)",
+                        xaxis_tickformat="%a %d %b\n%H:%M"
+                    )
+                    fig.update_xaxes(showticklabels=True)
+                    # --- END FORMATTING ---
+                    
                     st.plotly_chart(fig, use_container_width=True)
                     with st.expander("Show Current Statistics"):
                         st.dataframe(data[plot_cols].describe().T[['mean', 'min', 'max']].rename(columns={'mean':'Average', 'min':'Minimum', 'max':'Maximum'}))
@@ -657,6 +707,16 @@ else:
                 plot_cols = [c for c in voltage_cols_all if c in data.columns]
                 if plot_cols:
                     fig = px.line(data, x='Datetime', y=plot_cols)
+                    
+                    # --- GRAPH FORMATTING ---
+                    fig.update_layout(
+                        xaxis_title="Date & Time",
+                        yaxis_title="Voltage (V)",
+                        xaxis_tickformat="%a %d %b\n%H:%M"
+                    )
+                    fig.update_xaxes(showticklabels=True)
+                    # --- END FORMATTING ---
+                    
                     st.plotly_chart(fig, use_container_width=True)
                     with st.expander("Show Voltage Statistics"):
                         st.dataframe(data[plot_cols].describe().T[['mean', 'min', 'max']].rename(columns={'mean':'Average', 'min':'Minimum', 'max':'Maximum'}))
@@ -666,12 +726,32 @@ else:
                 st.info("These charts show the Real (useful work), Apparent (total), and Reactive (wasted) power. The top chart shows the total system power, while the bottom chart breaks down the real power by phase to identify imbalances in work being done.")
                 total_power_cols = [c for c in ['Total Avg Real Power (kW)', 'Total Avg Apparent Power (kVA)', 'Total Avg Reactive Power (kVAR)'] if c in data.columns]
                 if total_power_cols:
-                    fig = px.line(data, x='Datetime', y=total_power_cols)
+                    fig = px.line(data, x='Datetime', y=total_power_cols, title="Total System Power")
+                    
+                    # --- GRAPH FORMATTING ---
+                    fig.update_layout(
+                        xaxis_title="Date & Time",
+                        yaxis_title="Power (kW, kVA, kVAR)",
+                        xaxis_tickformat="%a %d %b\n%H:%M"
+                    )
+                    fig.update_xaxes(showticklabels=True)
+                    # --- END FORMATTING ---
+                    
                     st.plotly_chart(fig, use_container_width=True)
 
                 phase_power_cols = [c for c in ['L1 Avg Real Power (kW)', 'L2 Avg Real Power (kW)', 'L3 Avg Real Power (kW)'] if c in data.columns]
                 if phase_power_cols:
-                    fig2 = px.line(data, x='Datetime', y=phase_power_cols)
+                    fig2 = px.line(data, x='Datetime', y=phase_power_cols, title="Real Power per Phase")
+                    
+                    # --- GRAPH FORMATTING ---
+                    fig2.update_layout(
+                        xaxis_title="Date & Time",
+                        yaxis_title="Real Power (kW)",
+                        xaxis_tickformat="%a %d %b\n%H:%M"
+                    )
+                    fig2.update_xaxes(showticklabels=True)
+                    # --- END FORMATTING ---
+                    
                     st.plotly_chart(fig2, use_container_width=True)
 
             with tabs[4]:
@@ -680,6 +760,16 @@ else:
                 pf_cols = [c for c in ['L1 Power Factor', 'L2 Power Factor', 'L3 Power Factor'] if c in data.columns]
                 if pf_cols:
                     fig = px.line(data, x='Datetime', y=pf_cols)
+                    
+                    # --- GRAPH FORMATTING ---
+                    fig.update_layout(
+                        xaxis_title="Date & Time",
+                        yaxis_title="Power Factor",
+                        xaxis_tickformat="%a %d %b\n%H:%M"
+                    )
+                    fig.update_xaxes(showticklabels=True)
+                    # --- END FORMATTING ---
+                    
                     st.plotly_chart(fig, use_container_width=True)
                     with st.expander("Show Power Factor Statistics"):
                         st.dataframe(data[pf_cols].describe().T[['mean', 'min', 'max']].rename(columns={'mean':'Average', 'min':'Minimum', 'max':'Maximum'}))
