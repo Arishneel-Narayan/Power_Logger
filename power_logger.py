@@ -541,7 +541,7 @@ else:
                     with st.expander("Show Power Factor Statistics"):
                         stats_pf = {
                             "Minimum Power Factor": f"{data['Power Factor'].min():.3f}",
-                            "Average Power Factor": f"{data['PowerFactor'].mean():.3f}"
+                            "Average Power Factor": f"{data['Power Factor'].mean():.3f}"
                         }
                         st.json(stats_pf)
 
