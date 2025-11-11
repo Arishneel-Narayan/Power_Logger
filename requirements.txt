@@ -3,3 +3,5 @@ pandas
 plotly
 requests
 openpyxl
+fpdf2
+kaleido
