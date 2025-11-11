@@ -264,19 +264,31 @@ def generate_detailed_analysis_text(data: pd.DataFrame, wiring_system: str) -> s
             'L1 Avg Current (A)', 'L2 Avg Current (A)', 'L3 Avg Current (A)',
             'L1 Avg Voltage (V)', 'L2 Avg Voltage (V)', 'L3 Avg Voltage (V)'
         ]
+        power_col_for_pf = 'Total Avg Real Power (kW)'
+        
     elif wiring_system == '1P2W':
         cols_of_interest = [
             'Avg Real Power (kW)', 'Avg Apparent Power (kVA)', 'Power Factor',
             'Avg Current (A)', 'Avg Voltage (V)'
         ]
+        power_col_for_pf = 'Avg Real Power (kW)'
+
+    # --- PF AVERAGE FIX (AI Briefing) ---
+    # 1. Get power threshold
+    power_threshold = 0
+    if power_col_for_pf in data.columns:
+        peak_power = data[power_col_for_pf].max()
+        power_threshold = peak_power * 0.01 # 1% of peak
+    # --- END FIX ---
 
     for col in cols_of_interest:
         if col in data.columns and not data[col].dropna().empty:
             try:
-                # --- PF AVERAGE FIX ---
-                # Exclude 0s from stats calculation for PF columns
+                # --- PF AVERAGE FIX (AI Briefing) ---
+                # Exclude low-power values from stats calculation for PF columns
                 if 'Power Factor' in col:
-                    col_series = data[col].replace(0, pd.NA).dropna()
+                    # Filter PF data based on power threshold
+                    col_series = data[data[power_col_for_pf] > power_threshold][col].dropna()
                 else:
                     col_series = data[col].dropna()
                 
@@ -286,7 +298,7 @@ def generate_detailed_analysis_text(data: pd.DataFrame, wiring_system: str) -> s
 
                 stats = col_series.describe()
                 
-                # Get trend data
+                # Get trend data (from the same filtered series)
                 first_val = col_series.iloc[0]
                 last_val = col_series.iloc[-1]
                 trend_val = last_val - first_val
@@ -497,9 +509,17 @@ else:
             peak_kva = data['Avg Apparent Power (kVA)'].max() if 'Avg Apparent Power (kVA)' in data.columns else 0
             avg_kw = data['Avg Real Power (kW)'].abs().mean() if 'Avg Real Power (kW)' in data.columns else 0
             
-            # --- PF AVERAGE FIX (1-Phase) ---
-            avg_pf_series = data['Power Factor'].replace(0, pd.NA) if 'Power Factor' in data.columns else pd.Series(dtype=float)
-            avg_pf = avg_pf_series.mean() if not avg_pf_series.empty and not avg_pf_series.isnull().all() else 0
+            # --- ROBUST PF AVERAGE FIX (1-Phase) ---
+            avg_pf = 0
+            if 'Avg Real Power (kW)' in data.columns and 'Power Factor' in data.columns:
+                peak_power = data['Avg Real Power (kW)'].max()
+                power_threshold = peak_power * 0.01 # 1% of peak
+                
+                # Get PF values only when power is above threshold
+                operational_pf = data[data['Avg Real Power (kW)'] > power_threshold]['Power Factor']
+                
+                if not operational_pf.empty:
+                    avg_pf = operational_pf.mean()
             # --- END FIX ---
             
             st.subheader("Performance Metrics")
@@ -588,10 +608,17 @@ else:
             # KPIs are calculated on the time-filtered 'data' (which is Status=0)
             avg_power_kw = data['Total Avg Real Power (kW)'].mean() if 'Total Avg Real Power (kW)' in data.columns else 0
             
-            # --- PF AVERAGE FIX (3-Phase) ---
-            # Replace 0s with NA before calculating mean to get operational average
-            avg_pf_series = data['Total Power Factor'].replace(0, pd.NA) if 'Total Power Factor' in data.columns else pd.Series(dtype=float)
-            avg_pf = avg_pf_series.mean() if not avg_pf_series.empty and not avg_pf_series.isnull().all() else 0
+            # --- ROBUST PF AVERAGE FIX (3-Phase) ---
+            avg_pf = 0
+            if 'Total Avg Real Power (kW)' in data.columns and 'Total Power Factor' in data.columns:
+                peak_power_3p = data['Total Avg Real Power (kW)'].max()
+                power_threshold_3p = peak_power_3p * 0.01 # 1% of peak
+                
+                # Get PF values only when power is above threshold
+                operational_pf_3p = data[data['Total Avg Real Power (kW)'] > power_threshold_3p]['Total Power Factor']
+                
+                if not operational_pf_3p.empty:
+                    avg_pf = operational_pf_3p.mean()
             # --- END FIX ---
 
             # Find the true peak kVA (Max Demand)
@@ -796,10 +823,19 @@ else:
                     
                     st.plotly_chart(fig, use_container_width=True)
                     with st.expander("Show Power Factor Statistics"):
-                        # Calculate corrected stats for the expander
+                        # --- ROBUST PF AVERAGE FIX (Stats Expander) ---
                         pf_stats_data = {}
+                        
+                        # Get power threshold
+                        peak_power_3p = data['Total Avg Real Power (kW)'].max() if 'Total Avg Real Power (kW)' in data.columns else 0
+                        power_threshold_3p = peak_power_3p * 0.01 # 1% of peak
+                        
                         for col in pf_cols:
-                            col_series = data[col].replace(0, pd.NA).dropna()
+                            col_series = pd.Series(dtype=float)
+                            # Get PF values only when total power is above threshold
+                            if 'Total Avg Real Power (kW)' in data.columns:
+                                col_series = data[data['Total Avg Real Power (kW)'] > power_threshold_3p][col].dropna()
+                            
                             if not col_series.empty:
                                 stats = col_series.describe()
                                 pf_stats_data[col] = {
@@ -810,6 +846,7 @@ else:
                             else:
                                 pf_stats_data[col] = {"Average": "N/A", "Minimum": "N/A", "Maximum": "N/A"}
                         st.dataframe(pd.DataFrame(pf_stats_data).T)
+                        # --- END FIX ---
 
 
             with tabs[5]:
