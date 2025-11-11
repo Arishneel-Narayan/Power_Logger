@@ -11,6 +11,10 @@ import plotly.io as pio # New import for graph export
 
 # --- 1. Core Data Processing Engine ---
 
+# --- NEW: Absolute power threshold for "operational" PF calculation ---
+POWER_THRESHOLD_KW = 1.0
+# --- END NEW ---
+
 def get_rename_map(wiring_system: str) -> dict:
     """
     Dynamically generates a comprehensive rename map for all relevant columns
@@ -252,7 +256,7 @@ def generate_transform_summary(file_name: str, data_raw: pd.DataFrame, data_clea
     
     return "\n".join(summary_lines)
 
-# --- NEW, MORE POWERFUL AI BRIEFING FUNCTION ---
+# --- MORE POWERFUL AI BRIEFING FUNCTION ---
 def generate_detailed_analysis_text(data: pd.DataFrame, wiring_system: str) -> str:
     """
     Generates a structured statistical summary, including trends,
@@ -280,14 +284,6 @@ def generate_detailed_analysis_text(data: pd.DataFrame, wiring_system: str) -> s
         ]
         power_col_for_pf = 'Avg Real Power (kW)'
 
-    # --- PF AVERAGE FIX (AI Briefing) ---
-    # 1. Get power threshold
-    power_threshold = 0
-    if power_col_for_pf in data.columns and not data[power_col_for_pf].dropna().empty:
-        peak_power = data[power_col_for_pf].max()
-        power_threshold = peak_power * 0.01 # 1% of peak
-    # --- END FIX ---
-
     for col in cols_of_interest:
         if col in data.columns and not data[col].dropna().empty:
             try:
@@ -295,7 +291,10 @@ def generate_detailed_analysis_text(data: pd.DataFrame, wiring_system: str) -> s
                 # Exclude low-power values from stats calculation for PF columns
                 if 'Power Factor' in col:
                     # Filter PF data based on power threshold
-                    col_series = data[data[power_col_for_pf] > power_threshold][col].dropna()
+                    if power_col_for_pf in data.columns:
+                        col_series = data[data[power_col_for_pf] > POWER_THRESHOLD_KW][col].dropna()
+                    else:
+                        col_series = data[col].dropna() # Fallback
                 else:
                     col_series = data[col].dropna()
                 
@@ -504,12 +503,13 @@ def generate_kpis(data: pd.DataFrame, wiring_system: str) -> dict:
         avg_kw = data['Avg Real Power (kW)'].abs().mean() if 'Avg Real Power (kW)' in data.columns else 0
         
         avg_pf = 0
-        if 'Avg Real Power (kW)' in data.columns and 'Power Factor' in data.columns and not data['Avg Real Power (kW)'].dropna().empty:
-            peak_power = data['Avg Real Power (kW)'].max()
-            power_threshold = peak_power * 0.01 # 1% of peak
-            operational_pf = data[data['Avg Real Power (kW)'] > power_threshold]['Power Factor']
+        # --- ROBUST PF AVERAGE FIX (KPI) ---
+        if 'Avg Real Power (kW)' in data.columns and 'Power Factor' in data.columns:
+            # Use absolute 1.0 kW threshold to define "operational"
+            operational_pf = data[data['Avg Real Power (kW)'] > POWER_THRESHOLD_KW]['Power Factor']
             if not operational_pf.empty:
                 avg_pf = operational_pf.mean()
+        # --- END FIX ---
         
         kpi_summary = { 
             "Analysis Mode": "Single-Phase", "Total Consumed Energy": f"{total_kwh:.2f} kWh",
@@ -521,12 +521,13 @@ def generate_kpis(data: pd.DataFrame, wiring_system: str) -> dict:
         avg_power_kw = data['Total Avg Real Power (kW)'].mean() if 'Total Avg Real Power (kW)' in data.columns else 0
         
         avg_pf = 0
-        if 'Total Avg Real Power (kW)' in data.columns and 'Total Power Factor' in data.columns and not data['Total Avg Real Power (kW)'].dropna().empty:
-            peak_power_3p = data['Total Avg Real Power (kW)'].max()
-            power_threshold_3p = peak_power_3p * 0.01 # 1% of peak
-            operational_pf_3p = data[data['Total Avg Real Power (kW)'] > power_threshold_3p]['Total Power Factor']
+        # --- ROBUST PF AVERAGE FIX (KPI) ---
+        if 'Total Avg Real Power (kW)' in data.columns and 'Total Power Factor' in data.columns:
+             # Use absolute 1.0 kW threshold to define "operational"
+            operational_pf_3p = data[data['Total Avg Real Power (kW)'] > POWER_THRESHOLD_KW]['Total Power Factor']
             if not operational_pf_3p.empty:
                 avg_pf = operational_pf_3p.mean()
+        # --- END FIX ---
 
         peak_kva_3p = 0
         if 'Total Max Apparent Power (kVA)' in data.columns:
@@ -669,6 +670,12 @@ uploaded_file = st.sidebar.file_uploader("Upload a raw CSV from your Hioki Power
 if uploaded_file is None:
     st.info("Please upload a CSV file to begin analysis.")
 else:
+    # --- SESSION STATE FIX: Clear state if file name changes ---
+    if 'current_file_name' not in st.session_state or st.session_state.current_file_name != uploaded_file.name:
+        st.session_state.clear()
+        st.session_state.current_file_name = uploaded_file.name
+    # --- END FIX ---
+
     # Use the cached function to load data
     process_result = load_hioki_data(uploaded_file)
 
@@ -799,10 +806,18 @@ else:
                     
                     st.plotly_chart(fig_pf, use_container_width=True)
                     with st.expander("Show Power Factor Statistics"):
+                        # --- ROBUST PF AVERAGE FIX (Stats Expander) ---
+                        min_pf = "N/A"
+                        if 'Power Factor' in data.columns and not data['Power Factor'].empty:
+                            operational_pf_1p = data[data['Avg Real Power (kW)'] > POWER_THRESHOLD_KW]['Power Factor']
+                            if not operational_pf_1p.empty:
+                                min_pf = f"{operational_pf_1p.min():.3f}"
+                                
                         stats_pf = {
-                            "Minimum Power Factor": f"{data['Power Factor'].min():.3f}" if 'Power Factor' in data.columns and not data['Power Factor'].empty else "N/A",
+                            "Minimum Power Factor": min_pf,
                             "Average Power Factor": f"{avg_pf:.3f}" # Use the corrected average
                         }
+                        # --- END FIX ---
                         st.json(stats_pf)
 
             with tabs[1]:
@@ -1029,15 +1044,11 @@ else:
                         # --- ROBUST PF AVERAGE FIX (Stats Expander) ---
                         pf_stats_data = {}
                         
-                        # Get power threshold
-                        peak_power_3p = data['Total Avg Real Power (kW)'].max() if 'Total Avg Real Power (kW)' in data.columns else 0
-                        power_threshold_3p = peak_power_3p * 0.01 # 1% of peak
-                        
                         for col in pf_cols:
                             col_series = pd.Series(dtype=float)
                             # Get PF values only when total power is above threshold
                             if 'Total Avg Real Power (kW)' in data.columns:
-                                col_series = data[data['Total Avg Real Power (kW)'] > power_threshold_3p][col].dropna()
+                                col_series = data[data['Total Avg Real Power (kW)'] > POWER_THRESHOLD_KW][col].dropna()
                             
                             if not col_series.empty:
                                 stats = col_series.describe()
