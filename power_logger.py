@@ -129,16 +129,21 @@ def load_hioki_data(uploaded_file):
     data_df = data_df.rename(columns=ts_rename_map)
     
     # --- DATETIME PARSING FIX ---
-    # Correctly parse the 'Date' column which contains the full timestamp.
-    # Add dayfirst=True to robustly handle DD/MM/YYYY formats if they appear.
-    data_df['Datetime'] = pd.to_datetime(data_df['Date'], errors='coerce', dayfirst=True)
+    # Force the parser to use the unambiguous YYYY-MM-DD HH:MM:SS format
+    # This prevents '10/12/2025' from being read as Dec 10th.
+    try:
+        data_df['Datetime'] = pd.to_datetime(data_df['Date'], errors='coerce', format="%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        # Fallback in case a file *is* in a different format, though Hioki is consistent
+        data_df['Datetime'] = pd.to_datetime(data_df['Date'], errors='coerce')
+    # --- END FIX ---
     
     if data_df['Datetime'].isnull().all():
         st.error("Error: Could not parse any timestamps from the 'Date' column. The data cannot be processed.")
         return None
         
     data_df.dropna(subset=['Datetime'], inplace=True)
-    # --- END FIX ---
+
 
     identifier_cols_to_check = ['Datetime', 'Date', 'Etime', 'Machine Status']
     existing_identifiers = [col for col in identifier_cols_to_check if col in data_df.columns]
@@ -278,7 +283,7 @@ def generate_detailed_analysis_text(data: pd.DataFrame, wiring_system: str) -> s
     # --- PF AVERAGE FIX (AI Briefing) ---
     # 1. Get power threshold
     power_threshold = 0
-    if power_col_for_pf in data.columns:
+    if power_col_for_pf in data.columns and not data[power_col_for_pf].dropna().empty:
         peak_power = data[power_col_for_pf].max()
         power_threshold = peak_power * 0.01 # 1% of peak
     # --- END FIX ---
@@ -485,6 +490,9 @@ def generate_kpis(data: pd.DataFrame, wiring_system: str) -> dict:
     """Calculates the main KPI dictionary from a given dataframe."""
     kpi_summary = {}
     
+    if data.empty:
+        return {"Error": "No data"}
+    
     if wiring_system == '1P2W':
         total_kwh = 0
         energy_col = 'Consumed Real Energy (Wh)'
@@ -496,7 +504,7 @@ def generate_kpis(data: pd.DataFrame, wiring_system: str) -> dict:
         avg_kw = data['Avg Real Power (kW)'].abs().mean() if 'Avg Real Power (kW)' in data.columns else 0
         
         avg_pf = 0
-        if 'Avg Real Power (kW)' in data.columns and 'Power Factor' in data.columns:
+        if 'Avg Real Power (kW)' in data.columns and 'Power Factor' in data.columns and not data['Avg Real Power (kW)'].dropna().empty:
             peak_power = data['Avg Real Power (kW)'].max()
             power_threshold = peak_power * 0.01 # 1% of peak
             operational_pf = data[data['Avg Real Power (kW)'] > power_threshold]['Power Factor']
@@ -513,7 +521,7 @@ def generate_kpis(data: pd.DataFrame, wiring_system: str) -> dict:
         avg_power_kw = data['Total Avg Real Power (kW)'].mean() if 'Total Avg Real Power (kW)' in data.columns else 0
         
         avg_pf = 0
-        if 'Total Avg Real Power (kW)' in data.columns and 'Total Power Factor' in data.columns:
+        if 'Total Avg Real Power (kW)' in data.columns and 'Total Power Factor' in data.columns and not data['Total Avg Real Power (kW)'].dropna().empty:
             peak_power_3p = data['Total Avg Real Power (kW)'].max()
             power_threshold_3p = peak_power_3p * 0.01 # 1% of peak
             operational_pf_3p = data[data['Total Avg Real Power (kW)'] > power_threshold_3p]['Total Power Factor']
@@ -726,16 +734,20 @@ else:
             
             # --- KPI Generation Refactored ---
             kpi_summary = generate_kpis(data, wiring_system)
-            avg_pf = kpi_summary.get("Average Power Factor", 0) # Get calculated PF
+            
+            # --- TypeError FIX ---
+            # Get the string values from the KPI dict
             total_kwh_val = kpi_summary.get("Total Consumed Energy", "0.0 kWh").split(" ")[0]
             peak_kva_val = kpi_summary.get("Peak Demand (MD)", "0.0 kVA").split(" ")[0]
             avg_kw_val = kpi_summary.get("Average Power Draw", "0.0 kW").split(" ")[0]
+            avg_pf_val = kpi_summary.get("Average Power Factor", "0.0") # No unit to split
             
-            # Handle potential N/A
+            # Convert back to float for comparison
             total_kwh = float(total_kwh_val) if total_kwh_val != "N/A" else 0
             peak_kva = float(peak_kva_val) if peak_kva_val != "N/A" else 0
             avg_kw = float(avg_kw_val) if avg_kw_val != "N/A" else 0
-            # --- END REFACTOR ---
+            avg_pf = float(avg_pf_val) if avg_pf_val != "N/A" else 0
+            # --- END FIX ---
             
             st.subheader("Performance Metrics")
             col1, col2, col3, col4 = st.columns(4)
@@ -788,7 +800,7 @@ else:
                     st.plotly_chart(fig_pf, use_container_width=True)
                     with st.expander("Show Power Factor Statistics"):
                         stats_pf = {
-                            "Minimum Power Factor": f"{data['Power Factor'].min():.3f}",
+                            "Minimum Power Factor": f"{data['Power Factor'].min():.3f}" if 'Power Factor' in data.columns and not data['Power Factor'].empty else "N/A",
                             "Average Power Factor": f"{avg_pf:.3f}" # Use the corrected average
                         }
                         st.json(stats_pf)
@@ -816,16 +828,20 @@ else:
             
             # --- KPI Generation Refactored ---
             kpi_summary = generate_kpis(data, wiring_system)
+
+            # --- TypeError FIX ---
+            # Get the string values from the KPI dict
             avg_power_kw_val = kpi_summary.get("Avg. Total Power", "0.0 kW").split(" ")[0]
             peak_kva_3p_val = kpi_summary.get("Peak Demand (MD)", "0.0 kVA").split(" ")[0]
-            avg_pf = kpi_summary.get("Avg. Total PF", 0)
+            avg_pf_val = kpi_summary.get("Avg. Total PF", "0.0") # No unit to split
             imbalance_val = kpi_summary.get("Max Current Imbalance", "0.0 %").split(" ")[0]
 
-            # Handle potential N/A
+            # Convert back to float for comparison
             avg_power_kw = float(avg_power_kw_val) if avg_power_kw_val != "N/A" else 0
             peak_kva_3p = float(peak_kva_3p_val) if peak_kva_3p_val != "N/A" else 0
+            avg_pf = float(avg_pf_val) if avg_pf_val != "N/A" else 0
             imbalance = float(imbalance_val) if imbalance_val != "N/A" else 0
-            # --- END REFACTOR ---
+            # --- END FIX ---
             
             st.subheader("Performance Metrics")
             col1, col2, col3, col4 = st.columns(4)
