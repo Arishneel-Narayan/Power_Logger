@@ -6,6 +6,8 @@ import plotly.graph_objects as go
 from typing import Tuple, Optional, Dict
 import requests
 import io
+from fpdf import FPDF # New import for PDF
+import plotly.io as pio # New import for graph export
 
 # --- 1. Core Data Processing Engine ---
 
@@ -329,6 +331,7 @@ def get_gemini_analysis(summary_metrics: str,
                         additional_context: str = "") -> str:
     """Contacts the Gemini API for an expert analysis."""
     
+    # --- AI PROMPT UPDATE ---
     system_prompt = """You are an expert industrial energy efficiency analyst and process engineer for FMF Foods Ltd., a food manufacturing company in Fiji. Your task is to analyze power consumption data from industrial machinery at our biscuit factory in Suva. Your analysis must be framed within the context of a manufacturing environment.
     Your analysis MUST be based SOLELY on the 'CLEANED (Status=0) DATA'.
     
@@ -338,8 +341,10 @@ def get_gemini_analysis(summary_metrics: str,
     - **Equipment Health:** Interpret electrical data as indicators of mechanical health. Use the 'Detailed Stats & Trends' to understand the magnitude (Mean), volatility (StdDev), and load profiles (Trend).
     - **Cost Reduction:** Link your findings directly to cost-saving opportunities by focusing on reducing peak demand (MD) and improving power factor.
     - **Quantitative Significance:** When analyzing metrics, you MUST refer to the absolute values in the 'Detailed Stats & Trends' to determine the real-world impact.
+    - **CRITICAL ENGINEERING FEEDBACK:** You MUST de-prioritize current imbalance recommendations if the *absolute* difference between phase currents (in Amps) is minor (e.g., less than 50A), even if the *percentage* seems high. A 20-30 Amp difference is not significant enough to warrant a 'tedious current audit'. Focus on Peak Demand (MD) and Power Factor as the primary cost-saving drivers.
     
     Provide a concise, actionable report in Markdown format with three sections: 1. Executive Summary, 2. Key Observations & Pattern Analysis, and 3. Actionable Recommendations. Address the user as a fellow process optimization engineer."""
+    # --- END AI PROMPT UPDATE ---
     
     user_prompt = f"""
     Good morning, Please analyze the following power consumption data for an industrial machine at our Suva facility.
@@ -423,7 +428,226 @@ def to_excel_bytes(df: pd.DataFrame) -> bytes:
         df.to_excel(writer, index=False, sheet_name='Processed_Data')
     return output.getvalue()
 
-# --- 4. Streamlit UI and Analysis Section ---
+# --- 4. NEW: PDF Report Generation Functions ---
+
+# This helper class creates a basic FPDF structure
+class PDF(FPDF):
+    def header(self):
+        self.set_font('Helvetica', 'B', 12)
+        self.cell(0, 10, 'FMF Power Consumption Analysis Report', 0, 1, 'C')
+        self.set_font('Helvetica', '', 8)
+        self.cell(0, 5, f'Generated: {pd.Timestamp.now(tz="Pacific/Fiji").strftime("%a %d %b %Y, %H:%M")}', 0, 1, 'C')
+        self.ln(5)
+
+    def footer(self):
+        self.set_y(-15)
+        self.set_font('Helvetica', 'I', 8)
+        self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
+
+    def chapter_title(self, title):
+        self.set_font('Helvetica', 'B', 14)
+        self.cell(0, 10, title, 0, 1, 'L')
+        self.ln(2)
+
+    def chapter_body(self, body):
+        self.set_font('Helvetica', '', 10)
+        self.multi_cell(0, 5, body)
+        self.ln()
+
+    def add_kpi_table(self, kpi_dict):
+        self.set_font('Helvetica', 'B', 10)
+        self.cell(60, 8, 'Metric', 1)
+        self.cell(0, 8, 'Value', 1)
+        self.ln()
+        self.set_font('Helvetica', '', 10)
+        for key, value in kpi_dict.items():
+            self.cell(60, 8, str(key), 1)
+            self.cell(0, 8, str(value), 1)
+            self.ln()
+
+    def add_plotly_chart(self, fig, title):
+        self.add_page(orientation='L') # Landscape for graphs
+        self.chapter_title(title)
+        try:
+            # Export graph to in-memory image
+            img_bytes = pio.to_image(fig, format="png", width=1000, height=500)
+            img_stream = io.BytesIO(img_bytes)
+            # A4 Landscape width is 297mm. Margins 10mm each side = 277mm.
+            self.image(img_stream, w=277) 
+        except Exception as e:
+            self.set_text_color(255, 0, 0) # Red
+            self.cell(0, 10, f"Error generating graph '{title}': {e}")
+            self.set_text_color(0, 0, 0)
+        self.ln(5)
+
+# --- NEW: Refactored KPI Generation ---
+def generate_kpis(data: pd.DataFrame, wiring_system: str) -> dict:
+    """Calculates the main KPI dictionary from a given dataframe."""
+    kpi_summary = {}
+    
+    if wiring_system == '1P2W':
+        total_kwh = 0
+        energy_col = 'Consumed Real Energy (Wh)'
+        if energy_col in data.columns and not data[energy_col].dropna().empty:
+            energy_vals = data[energy_col].dropna()
+            if len(energy_vals) > 1: total_kwh = (energy_vals.iloc[-1] - energy_vals.iloc[0]) / 1000
+        
+        peak_kva = data['Avg Apparent Power (kVA)'].max() if 'Avg Apparent Power (kVA)' in data.columns else 0
+        avg_kw = data['Avg Real Power (kW)'].abs().mean() if 'Avg Real Power (kW)' in data.columns else 0
+        
+        avg_pf = 0
+        if 'Avg Real Power (kW)' in data.columns and 'Power Factor' in data.columns:
+            peak_power = data['Avg Real Power (kW)'].max()
+            power_threshold = peak_power * 0.01 # 1% of peak
+            operational_pf = data[data['Avg Real Power (kW)'] > power_threshold]['Power Factor']
+            if not operational_pf.empty:
+                avg_pf = operational_pf.mean()
+        
+        kpi_summary = { 
+            "Analysis Mode": "Single-Phase", "Total Consumed Energy": f"{total_kwh:.2f} kWh",
+            "Peak Demand (MD)": f"{peak_kva:.2f} kVA", "Average Power Draw": f"{avg_kw:.2f} kW",
+            "Average Power Factor": f"{avg_pf:.3f}"
+        }
+        
+    elif wiring_system == '3P4W':
+        avg_power_kw = data['Total Avg Real Power (kW)'].mean() if 'Total Avg Real Power (kW)' in data.columns else 0
+        
+        avg_pf = 0
+        if 'Total Avg Real Power (kW)' in data.columns and 'Total Power Factor' in data.columns:
+            peak_power_3p = data['Total Avg Real Power (kW)'].max()
+            power_threshold_3p = peak_power_3p * 0.01 # 1% of peak
+            operational_pf_3p = data[data['Total Avg Real Power (kW)'] > power_threshold_3p]['Total Power Factor']
+            if not operational_pf_3p.empty:
+                avg_pf = operational_pf_3p.mean()
+
+        peak_kva_3p = 0
+        if 'Total Max Apparent Power (kVA)' in data.columns:
+             peak_kva_3p = data['Total Max Apparent Power (kVA)'].max()
+        elif 'Total Avg Apparent Power (kVA)' in data.columns:
+             peak_kva_3p = data['Total Avg Apparent Power (kVA)'].max()
+
+        imbalance = 0
+        current_cols_avg = ['L1 Avg Current (A)', 'L2 Avg Current (A)', 'L3 Avg Current (A)']
+        if all(c in data.columns for c in current_cols_avg):
+            avg_currents = data[current_cols_avg].mean()
+            if avg_currents.mean() > 0: imbalance = (avg_currents.max() - avg_currents.min()) / avg_currents.mean() * 100
+
+        kpi_summary = { 
+            "Analysis Mode": "Three-Phase", "Avg. Total Power": f"{avg_power_kw:.2f} kW",
+            "Peak Demand (MD)": f"{peak_kva_3p:.2f} kVA", "Avg. Total PF": f"{avg_pf:.3f}",
+            "Max Current Imbalance": f"{imbalance:.1f} %"
+        }
+    return kpi_summary
+
+# --- NEW: Main PDF Generation Function ---
+def generate_pdf_report(
+    file_name: str,
+    parameters: pd.DataFrame,
+    wiring_system: str,
+    kpi_summary_selected: dict,
+    kpi_summary_full: dict,
+    ai_analysis: str,
+    data_full: pd.DataFrame # Use full, clean data for graphs
+) -> bytes:
+    """Generates the full PDF report."""
+    
+    # Handle potential Kaleido issue in headless environments
+    try:
+        pio.kaleido.scope.mathjax = None
+    except AttributeError:
+        pass # In case kaleido is not fully initialized
+
+    pdf = PDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    
+    # --- Page 1: Title ---
+    pdf.add_page()
+    pdf.set_font('Helvetica', 'B', 24)
+    pdf.cell(0, 20, 'FMF Power Consumption Analysis', 0, 1, 'C')
+    pdf.set_font('Helvetica', 'B', 16)
+    pdf.cell(0, 15, f'File: {file_name}', 0, 1, 'C')
+    pdf.ln(10)
+    pdf.set_font('Helvetica', '', 12)
+    start_date = data_full['Datetime'].min().strftime('%a %d %b %Y')
+    end_date = data_full['Datetime'].max().strftime('%a %d %b %Y')
+    pdf.cell(0, 10, f'Full Data Range: {start_date} to {end_date}', 0, 1, 'C')
+
+    # --- Page 2: AI Analysis ---
+    pdf.add_page()
+    pdf.chapter_title('1. AI-Powered Analysis')
+    pdf.chapter_body(ai_analysis)
+
+    # --- Page 3: Metrics ---
+    pdf.add_page()
+    pdf.chapter_title('2. Key Performance Indicators (KPIs)')
+    
+    pdf.set_font('Helvetica', 'B', 12)
+    pdf.cell(0, 10, 'Metrics for Selected Period', 0, 1, 'L')
+    pdf.add_kpi_table(kpi_summary_selected)
+    pdf.ln(10)
+    
+    pdf.set_font('Helvetica', 'B', 12)
+    pdf.cell(0, 10, 'Metrics for Full Period (All Status=0 Data)', 0, 1, 'L')
+    pdf.add_kpi_table(kpi_summary_full)
+    
+    # --- Page 4+: Graphs (from FULL data) ---
+    pdf.chapter_title('3. Full Period Graphs')
+    
+    # Re-create graphs using the full, clean dataset (data_full)
+    if wiring_system == '1P2W':
+        plot_cols = [col for col in ['Avg Real Power (kW)', 'Avg Apparent Power (kVA)', 'Avg Reactive Power (kVAR)'] if col in data_full.columns]
+        if plot_cols:
+            fig_power = px.line(data_full, x='Datetime', y=plot_cols)
+            fig_power.update_layout(xaxis_title="Date & Time", yaxis_title="Power (kW, kVA, kVAR)", xaxis_tickformat="%a %d %b\n%H:%M")
+            pdf.add_plotly_chart(fig_power, "Power Consumption Over Time (Full Period)")
+
+        if 'Power Factor' in data_full.columns:
+            fig_pf = px.line(data_full, x='Datetime', y='Power Factor')
+            fig_pf.add_hline(y=0.95, line_dash="dash", line_color="red")
+            fig_pf.update_layout(xaxis_title="Date & Time", yaxis_title="Power Factor", xaxis_tickformat="%a %d %b\n%H:%M")
+            pdf.add_plotly_chart(fig_pf, "Power Factor Over Time (Full Period)")
+    
+    elif wiring_system == '3P4W':
+        # Graph 1: Total System Power
+        total_power_cols = [c for c in ['Total Avg Real Power (kW)', 'Total Avg Apparent Power (kVA)', 'Total Avg Reactive Power (kVAR)'] if c in data_full.columns]
+        if total_power_cols:
+            fig_power_total = px.line(data_full, x='Datetime', y=total_power_cols)
+            fig_power_total.update_layout(xaxis_title="Date & Time", yaxis_title="Power (kW, kVA, kVAR)", xaxis_tickformat="%a %d %b\n%H:%M", title="Total System Power (Full Period)")
+            pdf.add_plotly_chart(fig_power_total, "Total System Power (Full Period)")
+
+        # Graph 2: Current Envelope
+        current_cols_all = [f'{p} {s} Current (A)' for p in ['L1', 'L2', 'L3'] for s in ['Min', 'Avg', 'Max']]
+        plot_cols_current = [c for c in current_cols_all if c in data_full.columns]
+        if plot_cols_current:
+            fig_current = px.line(data_full, x='Datetime', y=plot_cols_current)
+            fig_current.update_layout(xaxis_title="Date & Time", yaxis_title="Current (A)", xaxis_tickformat="%a %d %b\n%H:%M", title="Current Operational Envelope (Full Period)")
+            pdf.add_plotly_chart(fig_current, "Current Operational Envelope (Full Period)")
+
+        # Graph 3: Voltage Envelope
+        voltage_cols_all = [f'{p} {s} Voltage (V)' for p in ['L1', 'L2', 'L3'] for s in ['Min', 'Avg', 'Max']]
+        plot_cols_voltage = [c for c in voltage_cols_all if c in data_full.columns]
+        if plot_cols_voltage:
+            fig_voltage = px.line(data_full, x='Datetime', y=plot_cols_voltage)
+            fig_voltage.update_layout(xaxis_title="Date & Time", yaxis_title="Voltage (V)", xaxis_tickformat="%a %d %b\n%H:%M", title="Voltage Operational Envelope (Full Period)")
+            pdf.add_plotly_chart(fig_voltage, "Voltage Operational Envelope (Full Period)")
+            
+        # Graph 4: Power Factor per Phase
+        pf_cols = [c for c in ['L1 Power Factor', 'L2 Power Factor', 'L3 Power Factor'] if c in data_full.columns]
+        if pf_cols:
+            fig_pf_phase = px.line(data_full, x='Datetime', y=pf_cols)
+            fig_pf_phase.update_layout(xaxis_title="Date & Time", yaxis_title="Power Factor", xaxis_tickformat="%a %d %b\n%H:%M", title="Power Factor per Phase (Full Period)")
+            pdf.add_plotly_chart(fig_pf_phase, "Power Factor per Phase (Full Period)")
+    
+    # --- Last Page: Settings ---
+    pdf.add_page(orientation='P')
+    pdf.chapter_title('4. Measurement Settings')
+    pdf.chapter_body(parameters.to_string())
+
+    # Return as bytes
+    return pdf.output(dest='S').encode('latin-1')
+
+
+# --- 5. Streamlit UI and Analysis Section ---
 st.set_page_config(layout="wide", page_title="FMF Power Consumption Analysis")
 st.title("⚡ FMF Power Consumption Analysis Dashboard")
 
@@ -495,32 +719,23 @@ else:
                 st.warning("No data found in the selected time range. Try expanding the filter.")
                 st.stop() # Stop execution if filter results in no data
         
-        kpi_summary = {}
+        kpi_summary = {} # Will be populated by the refactored function
         
         if wiring_system == '1P2W':
             st.header("Single-Phase Performance Analysis")
             
-            total_kwh = 0
-            energy_col = 'Consumed Real Energy (Wh)'
-            if energy_col in data.columns and not data[energy_col].dropna().empty:
-                energy_vals = data[energy_col].dropna()
-                if len(energy_vals) > 1: total_kwh = (energy_vals.iloc[-1] - energy_vals.iloc[0]) / 1000
+            # --- KPI Generation Refactored ---
+            kpi_summary = generate_kpis(data, wiring_system)
+            avg_pf = kpi_summary.get("Average Power Factor", 0) # Get calculated PF
+            total_kwh_val = kpi_summary.get("Total Consumed Energy", "0.0 kWh").split(" ")[0]
+            peak_kva_val = kpi_summary.get("Peak Demand (MD)", "0.0 kVA").split(" ")[0]
+            avg_kw_val = kpi_summary.get("Average Power Draw", "0.0 kW").split(" ")[0]
             
-            peak_kva = data['Avg Apparent Power (kVA)'].max() if 'Avg Apparent Power (kVA)' in data.columns else 0
-            avg_kw = data['Avg Real Power (kW)'].abs().mean() if 'Avg Real Power (kW)' in data.columns else 0
-            
-            # --- ROBUST PF AVERAGE FIX (1-Phase) ---
-            avg_pf = 0
-            if 'Avg Real Power (kW)' in data.columns and 'Power Factor' in data.columns:
-                peak_power = data['Avg Real Power (kW)'].max()
-                power_threshold = peak_power * 0.01 # 1% of peak
-                
-                # Get PF values only when power is above threshold
-                operational_pf = data[data['Avg Real Power (kW)'] > power_threshold]['Power Factor']
-                
-                if not operational_pf.empty:
-                    avg_pf = operational_pf.mean()
-            # --- END FIX ---
+            # Handle potential N/A
+            total_kwh = float(total_kwh_val) if total_kwh_val != "N/A" else 0
+            peak_kva = float(peak_kva_val) if peak_kva_val != "N/A" else 0
+            avg_kw = float(avg_kw_val) if avg_kw_val != "N/A" else 0
+            # --- END REFACTOR ---
             
             st.subheader("Performance Metrics")
             col1, col2, col3, col4 = st.columns(4)
@@ -528,12 +743,6 @@ else:
             col2.metric("Peak Demand (MD)", f"{peak_kva:.2f} kVA" if peak_kva > 0 else "N/A")
             col3.metric("Average Power Draw", f"{avg_kw:.2f} kW" if avg_kw > 0 else "N/A")
             col4.metric("Average Power Factor", f"{avg_pf:.3f}" if avg_pf > 0 else "N/A")
-
-            kpi_summary = { 
-                "Analysis Mode": "Single-Phase", "Total Consumed Energy": f"{total_kwh:.2f} kWh",
-                "Peak Demand (MD)": f"{peak_kva:.2f} kVA", "Average Power Draw": f"{avg_kw:.2f} kW",
-                "Average Power Factor": f"{avg_pf:.3f}"
-            }
             
             tab_names = ["⚡ Power & Energy", "📝 Measurement Settings", "📋 Full Data Table"]
             
@@ -605,34 +814,18 @@ else:
         elif wiring_system == '3P4W':
             st.header("Three-Phase System Diagnostic")
             
-            # KPIs are calculated on the time-filtered 'data' (which is Status=0)
-            avg_power_kw = data['Total Avg Real Power (kW)'].mean() if 'Total Avg Real Power (kW)' in data.columns else 0
-            
-            # --- ROBUST PF AVERAGE FIX (3-Phase) ---
-            avg_pf = 0
-            if 'Total Avg Real Power (kW)' in data.columns and 'Total Power Factor' in data.columns:
-                peak_power_3p = data['Total Avg Real Power (kW)'].max()
-                power_threshold_3p = peak_power_3p * 0.01 # 1% of peak
-                
-                # Get PF values only when power is above threshold
-                operational_pf_3p = data[data['Total Avg Real Power (kW)'] > power_threshold_3p]['Total Power Factor']
-                
-                if not operational_pf_3p.empty:
-                    avg_pf = operational_pf_3p.mean()
-            # --- END FIX ---
+            # --- KPI Generation Refactored ---
+            kpi_summary = generate_kpis(data, wiring_system)
+            avg_power_kw_val = kpi_summary.get("Avg. Total Power", "0.0 kW").split(" ")[0]
+            peak_kva_3p_val = kpi_summary.get("Peak Demand (MD)", "0.0 kVA").split(" ")[0]
+            avg_pf = kpi_summary.get("Avg. Total PF", 0)
+            imbalance_val = kpi_summary.get("Max Current Imbalance", "0.0 %").split(" ")[0]
 
-            # Find the true peak kVA (Max Demand)
-            peak_kva_3p = 0
-            if 'Total Max Apparent Power (kVA)' in data.columns:
-                 peak_kva_3p = data['Total Max Apparent Power (kVA)'].max()
-            elif 'Total Avg Apparent Power (kVA)' in data.columns:
-                 peak_kva_3p = data['Total Avg Apparent Power (kVA)'].max()
-
-            imbalance = 0
-            current_cols_avg = ['L1 Avg Current (A)', 'L2 Avg Current (A)', 'L3 Avg Current (A)']
-            if all(c in data.columns for c in current_cols_avg):
-                avg_currents = data[current_cols_avg].mean()
-                if avg_currents.mean() > 0: imbalance = (avg_currents.max() - avg_currents.min()) / avg_currents.mean() * 100
+            # Handle potential N/A
+            avg_power_kw = float(avg_power_kw_val) if avg_power_kw_val != "N/A" else 0
+            peak_kva_3p = float(peak_kva_3p_val) if peak_kva_3p_val != "N/A" else 0
+            imbalance = float(imbalance_val) if imbalance_val != "N/A" else 0
+            # --- END REFACTOR ---
             
             st.subheader("Performance Metrics")
             col1, col2, col3, col4 = st.columns(4)
@@ -644,12 +837,6 @@ else:
             # --- END FIX ---
             
             col4.metric("Max Current Imbalance", f"{imbalance:.1f} %" if imbalance > 0 else "N/A", help="Under 5% is good.")
-
-            kpi_summary = { 
-                "Analysis Mode": "Three-Phase", "Average Total Power": f"{avg_power_kw:.2f} kW",
-                "Peak Demand (MD)": f"{peak_kva_3p:.2f} kVA", "Average Total Power Factor": f"{avg_pf:.3f}",
-                "Max Current Imbalance": f"{imbalance:.1f} %"
-            }
             
             tab_names_3p = ["📅 Daily Breakdown", "📊 Current & Load Balance", "🩺 Voltage Health", "⚡ Power Analysis", "⚖️ Power Factor", "📝 Settings", "📋 Full Data Table"]
             tabs = st.tabs(tab_names_3p)
@@ -880,6 +1067,7 @@ else:
             else:
                 with st.spinner("🧠 AI is analyzing the data... This may take a moment."):
                     # 1. KPIs from clean, filtered data
+                    # (kpi_summary was already generated above by generate_kpis())
                     summary_metrics_text = "\n".join([f"- {key}: {value}" for key, value in kpi_summary.items() if "N/A" not in str(value)])
                     # 2. Trend from clean, filtered data
                     trend_summary_text = generate_trend_summary(data, wiring_system)
@@ -900,11 +1088,40 @@ else:
                         additional_context
                     )
                     st.session_state['ai_analysis'] = ai_response
+                    
+                    # --- NEW: Save data for PDF generation ---
+                    st.session_state['kpi_summary_selected'] = kpi_summary
+                    # Generate and save full-period KPIs
+                    st.session_state['kpi_summary_full'] = generate_kpis(data_full, wiring_system)
+                    st.session_state['pdf_ready'] = True
+                    # --- END NEW ---
+
 
         if 'ai_analysis' in st.session_state:
             st.markdown("---")
             st.header("🤖 AI-Powered Analysis")
             st.markdown(st.session_state['ai_analysis'])
+            
+            # --- NEW: Add PDF Download Button ---
+            if st.session_state.get('pdf_ready', False):
+                with st.spinner("Building PDF Report..."):
+                    pdf_bytes = generate_pdf_report(
+                        file_name=uploaded_file.name,
+                        parameters=parameters,
+                        wiring_system=wiring_system,
+                        kpi_summary_selected=st.session_state['kpi_summary_selected'],
+                        kpi_summary_full=st.session_state['kpi_summary_full'],
+                        ai_analysis=st.session_state['ai_analysis'],
+                        data_full=data_full # Pass full, clean data for graphs
+                    )
+                
+                st.download_button(
+                    label="📥 Download Full PDF Report",
+                    data=pdf_bytes,
+                    file_name=f"{uploaded_file.name.split('.')[0]}_analysis_report.pdf",
+                    mime="application/pdf"
+                )
+            # --- END NEW ---
 
     elif uploaded_file is not None:
         # This message will show if process_result is None (e.g., from an error in load_hioki_data)
