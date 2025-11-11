@@ -153,9 +153,12 @@ def load_hioki_data(uploaded_file):
         if any(keyword in str(col) for keyword in ['(W)', '(VA)', 'VAR', '(V)', '(A)', 'Factor', 'Energy', '(Hz)', '(kVARh)']):
             data_df[col] = pd.to_numeric(data_df[col], errors='coerce')
 
+    # --- POWER FACTOR FIX ---
+    # Take absolute value to correct for reversed CT clamps (negative PF)
     for col in data_df.columns:
         if 'Power Factor' in col or 'Power' in col:
             data_df[col] = data_df[col].abs()
+    # --- END FIX ---
     
     # Calculate missing 'Total' columns if they weren't in the file
     if wiring_system == '3P4W':
@@ -168,6 +171,7 @@ def load_hioki_data(uploaded_file):
                 data_df['Total Avg Apparent Power (VA)'] = data_df[apparent_cols].sum(axis=1)
             
             if 'Total Avg Real Power (W)' in data_df.columns and 'Total Avg Apparent Power (VA)' in data_df.columns and 'Total Power Factor' not in data_df.columns:
+                # Calculate PF, handling potential divide-by-zero errors
                 data_df['Total Power Factor'] = data_df.apply(
                     lambda row: row['Total Avg Real Power (W)'] / row['Total Avg Apparent Power (VA)'] if row['Total Avg Apparent Power (VA)'] > 0 else 0,
                     axis=1
@@ -269,11 +273,22 @@ def generate_detailed_analysis_text(data: pd.DataFrame, wiring_system: str) -> s
     for col in cols_of_interest:
         if col in data.columns and not data[col].dropna().empty:
             try:
-                stats = data[col].describe()
+                # --- PF AVERAGE FIX ---
+                # Exclude 0s from stats calculation for PF columns
+                if 'Power Factor' in col:
+                    col_series = data[col].replace(0, pd.NA).dropna()
+                else:
+                    col_series = data[col].dropna()
+                
+                if col_series.empty:
+                    continue
+                # --- END FIX ---
+
+                stats = col_series.describe()
                 
                 # Get trend data
-                first_val = data[col].iloc[0]
-                last_val = data[col].iloc[-1]
+                first_val = col_series.iloc[0]
+                last_val = col_series.iloc[-1]
                 trend_val = last_val - first_val
                 
                 line = (
@@ -481,7 +496,11 @@ else:
             
             peak_kva = data['Avg Apparent Power (kVA)'].max() if 'Avg Apparent Power (kVA)' in data.columns else 0
             avg_kw = data['Avg Real Power (kW)'].abs().mean() if 'Avg Real Power (kW)' in data.columns else 0
-            avg_pf = data['Power Factor'].abs().mean() if 'Power Factor' in data.columns else 0
+            
+            # --- PF AVERAGE FIX (1-Phase) ---
+            avg_pf_series = data['Power Factor'].replace(0, pd.NA) if 'Power Factor' in data.columns else pd.Series(dtype=float)
+            avg_pf = avg_pf_series.mean() if not avg_pf_series.empty and not avg_pf_series.isnull().all() else 0
+            # --- END FIX ---
             
             st.subheader("Performance Metrics")
             col1, col2, col3, col4 = st.columns(4)
@@ -541,7 +560,7 @@ else:
                     with st.expander("Show Power Factor Statistics"):
                         stats_pf = {
                             "Minimum Power Factor": f"{data['Power Factor'].min():.3f}",
-                            "Average Power Factor": f"{data['Power Factor'].mean():.3f}"
+                            "Average Power Factor": f"{avg_pf:.3f}" # Use the corrected average
                         }
                         st.json(stats_pf)
 
@@ -568,8 +587,13 @@ else:
             
             # KPIs are calculated on the time-filtered 'data' (which is Status=0)
             avg_power_kw = data['Total Avg Real Power (kW)'].mean() if 'Total Avg Real Power (kW)' in data.columns else 0
-            avg_pf = data['Total Power Factor'].mean() if 'Total Power Factor' in data.columns else 0
             
+            # --- PF AVERAGE FIX (3-Phase) ---
+            # Replace 0s with NA before calculating mean to get operational average
+            avg_pf_series = data['Total Power Factor'].replace(0, pd.NA) if 'Total Power Factor' in data.columns else pd.Series(dtype=float)
+            avg_pf = avg_pf_series.mean() if not avg_pf_series.empty and not avg_pf_series.isnull().all() else 0
+            # --- END FIX ---
+
             # Find the true peak kVA (Max Demand)
             peak_kva_3p = 0
             if 'Total Max Apparent Power (kVA)' in data.columns:
@@ -589,7 +613,7 @@ else:
             # --- KPI FORMATTING FIX ---
             col1.metric("Avg. Total Power", f"{avg_power_kw:.2f} kW" if avg_power_kw > 0 else "N/A")
             col2.metric("Peak Demand (MD)", f"{peak_kva_3p:.2f} kVA" if peak_kva_3p > 0 else "N/A")
-            col3.metric("Avg. Total PF", f"{avg_pf:.3f}" if avg_pf > 0 else "N/A")
+            col3.metric("Avg. Total PF", f"{avg_pf:.3f}" if avg_pf > 0 else "N/A") # Use corrected avg_pf
             # --- END FIX ---
             
             col4.metric("Max Current Imbalance", f"{imbalance:.1f} %" if imbalance > 0 else "N/A", help="Under 5% is good.")
@@ -772,7 +796,21 @@ else:
                     
                     st.plotly_chart(fig, use_container_width=True)
                     with st.expander("Show Power Factor Statistics"):
-                        st.dataframe(data[pf_cols].describe().T[['mean', 'min', 'max']].rename(columns={'mean':'Average', 'min':'Minimum', 'max':'Maximum'}))
+                        # Calculate corrected stats for the expander
+                        pf_stats_data = {}
+                        for col in pf_cols:
+                            col_series = data[col].replace(0, pd.NA).dropna()
+                            if not col_series.empty:
+                                stats = col_series.describe()
+                                pf_stats_data[col] = {
+                                    "Average": f"{stats['mean']:.3f}",
+                                    "Minimum": f"{stats['min']:.3f}",
+                                    "Maximum": f"{stats['max']:.3f}"
+                                }
+                            else:
+                                pf_stats_data[col] = {"Average": "N/A", "Minimum": "N/A", "Maximum": "N/A"}
+                        st.dataframe(pd.DataFrame(pf_stats_data).T)
+
 
             with tabs[5]:
                 st.subheader("Measurement Settings")
