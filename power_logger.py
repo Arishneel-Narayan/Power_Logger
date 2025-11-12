@@ -59,10 +59,10 @@ def get_rename_map(wiring_system: str) -> dict:
                 ts_map[f"{tech_prefix}{phase_suffix}_Avg"] = f"{phase_prefix}Power Factor"
 
     ts_map.update({
-        'P_Avg[W]': 'Total Avg Real Power (W)',
-        'S_Avg[VA]': 'Total Avg Apparent Power (VA)',
-        'Q_Avg[var]': 'Total Avg Reactive Power (VAR)',
-        'PF_Avg': 'Total Power Factor',
+        # 'P_Avg[W]': 'Total Avg Real Power (W)',  <-- REMOVED (CONFLICTS WITH LOOP)
+        # 'S_Avg[VA]': 'Total Avg Apparent Power (VA)', <-- REMOVED (CONFLICTS WITH LOOP)
+        # 'Q_Avg[var]': 'Total Avg Reactive Power (VAR)', <-- REMOVED (CONFLICTS WITH LOOP)
+        # 'PF_Avg': 'Total Power Factor', <-- REMOVED (CONFLICTS WITH LOOP)
         'P_max[W]': 'Total Max Real Power (W)',
         'S_max[VA]': 'Total Max Apparent Power (VA)',
         'Pdem+1[W]': 'Power Demand (W)', 'Pdem+sum[W]': 'Total Power Demand (W)',
