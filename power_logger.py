@@ -294,34 +294,35 @@ def generate_ai_data_context(data: pd.DataFrame, wiring_system: str) -> str:
     return "\n".join(summary_lines)
 
 
-def get_gemini_analysis(ai_data_context: str,
+def get_pulse_analysis(ai_data_context: str,
                         params_info: str, 
                         transform_log: str, 
                         additional_context: str = "") -> str:
-    """Contacts the Gemini API for an expert analysis."""
+    """Contacts the PULSE AI for an expert analysis."""
     
     # UPDATED SYSTEM PROMPT
-    system_prompt = """You are an expert industrial energy efficiency analyst and process engineer for FMF Foods Ltd. Your task is to analyze power consumption data from industrial machinery at our biscuit factory.
-    
+    system_prompt = """You are PULSE (Power Usage Learning and Support Engine), an expert quantitative analyst for FMF Foods Ltd. Your task is to analyze power data for the process optimization engineer.
+
     Your analysis MUST be:
-    1.  **Concise:** Use bullet points and markdown tables. Avoid long paragraphs.
-    2.  **Actionable:** Provide clear, prioritized recommendations.
-    3.  **Standards-Based:** When possible, cite relevant standards (e.g., IEEE, IEC, NEMA) to support your observations (e.g., voltage imbalance, power factor).
+    1.  **Numbers-Based:** Be quantitative. Use numbers from the tables provided.
+    2.  **Concise:** Use short, simple sentences. Use bullet points and markdown tables.
+    3.  **Explanatory:** Explain trends (e.g., "High Std Dev means high load volatility").
+    4.  **Referential:** You MUST reference the specific 'Peak Demand (MD)' and 'Peak Real Power' events from the 'Peak Event Summary'.
+    5.  **Standards-Based:** Cite relevant standards (e.g., IEEE, IEC, NEMA) to support observations.
     
     Your analysis MUST be based SOLELY on the 'CLEANED (Status=0) DATA'.
 
     Core Principles:
     - **Pattern Analysis:** Use the 'Detailed Statistical Summary' table to analyze key metrics.
     - **Peak Events:** Use the 'Peak Event Summary' to understand the *specific* peak demand (kVA) and peak power (kW) events.
-    - **Equipment Health:** Interpret electrical data as indicators of mechanical health (e.g., high 'Std Dev' = volatility).
     - **Cost Reduction:** Focus on reducing 'Peak Demand (MD)' and improving 'Total Power Factor'.
-    - **Quantitative Significance:** Refer to the absolute values in the tables to determine real-world impact.
-    - **CRITICAL ENGINEERING FEEDBACK:** De-prioritize current imbalance recommendations if the *absolute* difference between phase currents (in Amps) is minor (e.g., less than 50A), even if the *percentage* seems high. A 20-30 Amp difference is not significant enough to warrant a 'tedious current audit'.
+    - **Quantitative Significance:** Refer to the absolute values in the tables.
+    - **CRITICAL ENGINEERING FEEDBACK:** De-prioritize current imbalance recommendations if the *absolute* difference between phase currents (in Amps) is minor (e.g., less than 50A), even if the *percentage* seems high.
     
     Provide a short, informative report in Markdown format with three sections:
-    1.  **Executive Summary** (2-3 bullet points)
+    1.  **PULSE Executive Summary** (2-3 key bullet points)
     2.  **Key Observations** (Use a markdown table and bullet points based on the 'Detailed Statistical Summary')
-    3.  **Actionable Recommendations** (Use numbered bullet points, citing standards where applicable)
+    3.  **Actionable Recommendations** (Use numbered bullet points, citing standards)
     
     Address the user as a fellow process optimization engineer."""
     
@@ -331,7 +332,7 @@ def get_gemini_analysis(ai_data_context: str,
     **Data Transformation Log (CRITICAL CONTEXT):**
     {transform_log}
     
-    **Data Analysis (Selected Period):**
+    **PULSE Data Analysis (Selected Period):**
     {ai_data_context}
     
     **Measurement Parameters:**
@@ -339,12 +340,12 @@ def get_gemini_analysis(ai_data_context: str,
     """
     if additional_context:
         user_prompt += f"\n**Additional Engineer's Context:**\n{additional_context}"
-    user_prompt += "\nBased on all this information, please generate your concise, standards-based report."
+    user_prompt += "\nBased on all this information, please generate your concise, quantitative, standards-based report."
     
     try:
         api_key = st.secrets["GEMINI_API_KEY"]
     except (KeyError, FileNotFoundError):
-        return "Error: Gemini API key not found. Please add it to your Streamlit Secrets."
+        return "Error: PULSE API key not found. Please add it to your Streamlit Secrets."
     
     # Use gemini-2.5-pro and corrected URL spelling
     api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key={api_key}"
@@ -361,26 +362,26 @@ def get_gemini_analysis(ai_data_context: str,
         result = response.json()
         
         if 'error' in result:
-            return f"Error from Gemini API: {result['error']['message']}"
+            return f"Error from PULSE API: {result['error']['message']}"
             
         candidate = result.get('candidates', [{}])[0]
         
         # Check for safety ratings or finish reason
         if candidate.get('finishReason') not in ['STOP', 'MAX_TOKENS']:
-             return f"Error: API call finished unexpectedly. Reason: {candidate.get('finishReason', 'Unknown')}"
+             return f"Error: PULSE API call finished unexpectedly. Reason: {candidate.get('finishReason', 'Unknown')}"
 
         if not candidate.get('content', {}).get('parts', []):
-            return "Error: API returned an empty response. This may be due to safety filters."
+            return "Error: PULSE API returned an empty response. This may be due to safety filters."
             
         content = candidate['content']['parts'][0]
-        return content.get('text', "Error: Could not extract analysis from the API response.")
+        return content.get('text', "Error: Could not extract analysis from the PULSE API response.")
         
     except requests.exceptions.HTTPError as http_err:
         return f"HTTP error occurred: {http_err} - {response.text}"
     except requests.exceptions.RequestException as req_err:
         return f"A network error occurred: {req_err}"
     except Exception as e:
-        return f"An unexpected error occurred while contacting the AI: {e}"
+        return f"An unexpected error occurred while contacting PULSE: {e}"
 
 # --- 3. Helper Function for Excel Download ---
 
@@ -399,7 +400,7 @@ def generate_html_report(
     wiring_system: str,
     kpi_summary_selected: dict,
     kpi_summary_full: dict,
-    ai_analysis: str,
+    pulse_analysis: str,
     data_full: pd.DataFrame # Use full, clean data for graphs
 ) -> bytes:
     """Generates a self-contained HTML report with embedded graphs."""
@@ -477,7 +478,7 @@ def generate_html_report(
         graphs_html += get_graph_html(fig_pf_phase, "Power Factor per Phase (Full Period)")
     
     # --- Convert Markdown to HTML ---
-    ai_analysis_html = markdown.markdown(ai_analysis, extensions=['tables'])
+    pulse_analysis_html = markdown.markdown(pulse_analysis, extensions=['tables'])
     
     # --- Get Other HTML Elements ---
     kpi_selected_html = kpi_to_html_table(kpi_summary_selected)
@@ -488,7 +489,7 @@ def generate_html_report(
     html_template = f"""
     <html>
     <head>
-        <title>FMF Power Analysis: {file_name}</title>
+        <title>FMF PULSE Analysis: {file_name}</title>
         <style>
             body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0 auto; max-width: 1200px; padding: 20px; }}
             h1, h2, h3 {{ color: #004a99; }}
@@ -503,19 +504,19 @@ def generate_html_report(
             .full-width {{ grid-column: 1 / -1; }}
             .kpi-section {{ break-inside: avoid; }}
             /* Styles for AI-generated tables */
-            .ai-analysis table {{ width: 100%; }}
-            .ai-analysis th {{ background-color: #e0ebf5; }}
+            .pulse-analysis table {{ width: 100%; }}
+            .pulse-analysis th {{ background-color: #e0ebf5; }}
         </style>
     </head>
     <body>
-        <h1>FMF Power Consumption Analysis</h1>
+        <h1>FMF PULSE Analysis</h1>
         <p><strong>File:</strong> {file_name}</p>
         <p><strong>Generated:</strong> {pd.Timestamp.now(tz="Pacific/Fiji").strftime("%a %d %b %Y, %H:%M")}</p>
         
         <div class="full-width">
-            <h2>1. AI-Powered Analysis</h2>
-            <div class="ai-analysis">
-                {ai_analysis_html}
+            <h2>1. PULSE Analysis</h2>
+            <div class="pulse-analysis">
+                {pulse_analysis_html}
             </div>
         </div>
 
@@ -610,8 +611,9 @@ def generate_kpis(data: pd.DataFrame, wiring_system: str) -> dict:
 
 
 # --- 6. Streamlit UI and Analysis Section ---
-st.set_page_config(layout="wide", page_title="FMF Power Consumption Analysis")
-st.title("⚡ FMF Power Consumption Analysis Dashboard")
+st.set_page_config(layout="wide", page_title="FMF PULSE Analysis")
+st.title("⚡ FMF PULSE Analysis Dashboard")
+st.markdown(f"**P**ower **U**sage **L**earning and **S**upport **E**ngine")
 
 # Use requested date format for the title
 current_time_fiji = pd.Timestamp.now(tz='Pacific/Fiji').strftime('%a %d %b %Y')
@@ -1003,16 +1005,16 @@ else:
                     help="This downloads only the data rows with Status=0, which are used for all graphs and analysis."
                 )
         
-        # --- AI Section (Common to both) ---
+        # --- PULSE AI Section (Common to both) ---
         st.sidebar.markdown("---")
-        st.sidebar.subheader("Add Custom AI Context")
+        st.sidebar.subheader("Add Custom PULSE Context")
         additional_context = st.sidebar.text_area("Provide specific details about the machine or process (optional):", help="E.g., 'This is the main dough mixer, model XYZ.' or 'The large spike at 10:00 was a planned startup.'")
 
-        if st.sidebar.button("🤖 Get AI-Powered Analysis"):
+        if st.sidebar.button("🤖 Get PULSE Analysis"):
             if data.empty:
                 st.sidebar.error("Cannot run analysis on an empty dataset. Widen your time filter.")
             else:
-                with st.spinner("🧠 AI is analyzing the data... This may take a moment."):
+                with st.spinner("🧠 PULSE is analyzing the data... This may take a moment."):
                     # 1. Generate the single, unambiguous data context
                     ai_data_context = generate_ai_data_context(data, wiring_system)
                     
@@ -1022,13 +1024,13 @@ else:
                     # 3. Transformation Log
                     transform_log_text = generate_transform_summary(uploaded_file.name, data_raw, data_full)
                     
-                    ai_response = get_gemini_analysis(
+                    pulse_response = get_pulse_analysis(
                         ai_data_context,
                         params_info_text,
                         transform_log_text,
                         additional_context
                     )
-                    st.session_state['ai_analysis'] = ai_response
+                    st.session_state['pulse_analysis'] = pulse_response
                     
                     # --- Save data for HTML report generation ---
                     st.session_state['kpi_summary_selected'] = kpi_summary
@@ -1038,10 +1040,10 @@ else:
                     # --- END ---
 
 
-        if 'ai_analysis' in st.session_state:
+        if 'pulse_analysis' in st.session_state:
             st.markdown("---")
-            st.header("🤖 AI-Powered Analysis")
-            st.markdown(st.session_state['ai_analysis'])
+            st.header("🤖 PULSE Analysis")
+            st.markdown(st.session_state['pulse_analysis'])
             
             # --- DOWNLOAD BUTTONS ---
             st.markdown("---") # Add a separator
@@ -1050,11 +1052,11 @@ else:
             
             # Button 1: Download AI text
             dl_col1.download_button(
-                label="📄 Download AI Report (.txt)",
-                data=st.session_state['ai_analysis'],
-                file_name=f"{uploaded_file.name.split('.')[0]}_ai_analysis.txt",
+                label="📄 Download PULSE Report (.txt)",
+                data=st.session_state['pulse_analysis'],
+                file_name=f"{uploaded_file.name.split('.')[0]}_pulse_analysis.txt",
                 mime="text/plain",
-                help="Downloads only the text-based AI analysis."
+                help="Downloads only the text-based PULSE analysis."
             )
             
             # Button 2: Download Full HTML Report
@@ -1066,16 +1068,16 @@ else:
                         wiring_system=wiring_system,
                         kpi_summary_selected=st.session_state['kpi_summary_selected'],
                         kpi_summary_full=st.session_state['kpi_summary_full'],
-                        ai_analysis=st.session_state['ai_analysis'],
+                        pulse_analysis=st.session_state['pulse_analysis'],
                         data_full=data_full # Pass full, clean data for graphs
                     )
                 
                 dl_col2.download_button(
                     label="📕 Download Full HTML Report",
                     data=html_bytes,
-                    file_name=f"{uploaded_file.name.split('.')[0]}_analysis_report.html",
+                    file_name=f"{uploaded_file.name.split('.')[0]}_pulse_analysis_report.html",
                     mime="text/html",
-                    help="Downloads the complete report with AI analysis, KPIs, and all graphs. Open in browser and 'Print to PDF'."
+                    help="Downloads the complete report with PULSE analysis, KPIs, and all graphs. Open in browser and 'Print to PDF'."
                 )
             # --- END DOWNLOADS ---
 
