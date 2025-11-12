@@ -341,7 +341,7 @@ def get_gemini_analysis(summary_metrics: str,
     except (KeyError, FileNotFoundError):
         return "Error: Gemini API key not found. Please add it to your Streamlit Secrets."
     
-    api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key={api_key}"
+    api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key={api_key}"
     
     payload = {
         "contents": [{"parts": [{"text": user_prompt}]}],
@@ -681,7 +681,7 @@ else:
             if data.empty:
                 st.warning("No data found in the selected time range. Try expanding the filter.")
                 st.stop() # Stop execution if filter results in no data
-        
+    
         # --- KPI Generation ---
         kpi_summary = generate_kpis(data, wiring_system)
         
@@ -996,100 +996,6 @@ else:
         
         # --- AI Section (Common to both) ---
         st.sidebar.markdown("---")
-        st.sidebar.subheader("Add Custom AI Context")
-        additional_context = st.sidebar.text_area("Provide specific details about the machine or process (optional):", help="E.g., 'This is the main dough mixer, model XYZ.' or 'The large spike at 10:00 was a planned startup.'")
-
-        if st.sidebar.button("🤖 Get AI-Powered Analysis"):
-            if data.empty:
-                st.sidebar.error("Cannot run analysis on an empty dataset. Widen your time filter.")
-            else:
-                with st.spinner("🧠 AI is analyzing the data... This may take a moment."):
-                    # 1. KPIs from clean, filtered data
-                    # (kpi_summary was already generated above by generate_kpis())
-                    summary_metrics_text = "\n".join([f"- {key}: {value}" for key, value in kpi_summary.items() if "N/A" not in str(value)])
-                    # 2. Trend from clean, filtered data
-                    trend_summary_text = generate_trend_summary(data, wiring_system)
-                    # 3. Stats from clean, filtered data
-                    detailed_stats_text = generate_detailed_analysis_text(data, wiring_system)
-                    # 4. Measurement settings
-                    params_info_text = parameters.to_string()
-                    # 5. Transformation Log
-                    transform_log_text = generate_transform_summary(uploaded_file.name, data_raw, data_full)
-
-                    
-                    ai_response = get_gemini_analysis(
-                        summary_metrics_text,
-                        detailed_stats_text,
-                        trend_summary_text,
-                        params_info_text,
-                        transform_log_text,
-                        additional_context
-                    )
-                    st.session_state['ai_analysis'] = ai_response
-                    
-                    # --- Save data for PDF generation ---
-                    st.session_state['kpi_summary_selected'] = kpi_summary
-                    # Generate and save full-period KPIs
-                    st.session_state['kpi_summary_full'] = generate_kpis(data_full, wiring_system)
-                    st.session_state['pdf_ready'] = True
-                    # --- END ---
-
-
-        if 'ai_analysis' in st.session_state:
-            st.markdown("---")
-            st.header("🤖 AI-Powered Analysis")
-            st.markdown(st.session_state['ai_analysis'])
-            
-            # --- DOWNLOAD BUTTONS ---
-            st.markdown("---") # Add a separator
-            
-            dl_col1, dl_col2 = st.columns(2)
-            
-            # Button 1: Download AI text
-            dl_col1.download_button(
-                label="📄 Download AI Report (.txt)",
-                data=st.session_state['ai_analysis'],
-                file_name=f"{uploaded_file.name.split('.')[0]}_ai_analysis.txt",
-                mime="text/plain",
-                help="Downloads only the text-based AI analysis."
-            )
-            
-            # Button 2: Download Full PDF
-            if st.session_state.get('pdf_ready', False):
-                with st.spinner("Building PDF Report..."):
-                    pdf_bytes = generate_pdf_report(
-                        file_name=uploaded_file.name,
-                        parameters=parameters,
-                        wiring_system=wiring_system,
-                        kpi_summary_selected=st.session_state['kpi_summary_selected'],
-                        kpi_summary_full=st.session_state['kpi_summary_full'],
-                        ai_analysis=st.session_state['ai_analysis'],
-                        data_full=data_full # Pass full, clean data for graphs
-                    )
-                
-                dl_col2.download_button(
-                    label="📕 Download Full PDF Report",
-                    data=pdf_bytes,
-                    file_name=f"{uploaded_file.name.split('.')[0]}_analysis_report.pdf",
-                    mime="application/pdf",
-                    help="Downloads the complete report with AI analysis, KPIs, and all graphs."
-                )
-            # --- END DOWNLOADS ---
-
-    elif uploaded_file is not None:
-        # This triggers if process_result is None
-        st.warning("Could not process the uploaded file. Please ensure it is a valid, non-empty Hioki CSV export.")
-# Download button downloads the CLEAN (Status=0) data_full
-st.download_button(
-    label="📥 Download Clean Data (Excel)",
-    data=to_excel_bytes(data_full),
-    file_name=f"{uploaded_file.name.split('.')[0]}_processed_clean.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    help="This downloads only the data rows with Status=0, which are used for all graphs and analysis."
-    )
-        
-        # --- AI Section (Common to both) ---
-st.sidebar.markdown("---")
         st.sidebar.subheader("Add Custom AI Context")
         additional_context = st.sidebar.text_area("Provide specific details about the machine or process (optional):", help="E.g., 'This is the main dough mixer, model XYZ.' or 'The large spike at 10:00 was a planned startup.'")
 
