@@ -189,44 +189,6 @@ def load_hioki_data(uploaded_file):
 
 # --- 2. AI Service & Summaries ---
 
-def generate_trend_summary(data: pd.DataFrame, wiring_system: str) -> str:
-    """Creates a narrative summary of the key power fluctuations."""
-    if data.empty:
-        return "No data available to analyze trends."
-
-    key_metric = ""
-    if wiring_system == '3P4W' and 'Total Avg Real Power (kW)' in data.columns:
-        key_metric = 'Total Avg Real Power (kW)'
-    elif wiring_system == '1P2W' and 'Avg Real Power (kW)' in data.columns:
-        key_metric = 'Avg Real Power (kW)'
-
-    if not key_metric or data[key_metric].dropna().empty:
-        return "Key power metric not available for trend analysis."
-
-    metric_series = data[key_metric]
-    
-    # Use requested date format
-    date_format = '%a %d %b %Y, %H:%M:%S'
-    start_time = data['Datetime'].iloc[0].strftime(date_format)
-    end_time = data['Datetime'].iloc[-1].strftime(date_format)
-
-    initial_power = metric_series.iloc[0]
-    final_power = metric_series.iloc[-1]
-    
-    peak_power = metric_series.max()
-    peak_time = data.loc[metric_series.idxmax(), 'Datetime'].strftime(date_format)
-    
-    min_power = metric_series.min()
-    min_time = data.loc[metric_series.idxmin(), 'Datetime'].strftime(date_format)
-
-    summary = (
-        f"Period: {start_time} to {end_time}. "
-        f"Start Load: {initial_power:.2f} kW. End Load: {final_power:.2f} kW. "
-        f"Peak Load: {peak_power:.2f} kW at {peak_time}. "
-        f"Min Load: {min_power:.2f} kW."
-    )
-    return summary
-
 def generate_transform_summary(file_name: str, data_raw: pd.DataFrame, data_clean: pd.DataFrame) -> str:
     """Generates a log of all data transformations."""
     summary_lines = [f"- File: `{file_name}` (Loaded {len(data_raw)} raw rows)."]
@@ -240,62 +202,99 @@ def generate_transform_summary(file_name: str, data_raw: pd.DataFrame, data_clea
     summary_lines.append("- Converted all power units to kW, kVA, and kVAR.")
     return "\n".join(summary_lines)
 
-def generate_detailed_analysis_text(data: pd.DataFrame, wiring_system: str) -> str:
-    """Generates structured stats & trends for key columns."""
-    if data.empty: return "No data available."
-    summary_lines = []
-    
-    # Define columns of interest
-    cols_of_interest = []
-    power_col = ''
+def generate_ai_data_context(data: pd.DataFrame, wiring_system: str) -> str:
+    """
+    Generates a single, comprehensive markdown string containing all peak event
+    and statistical data for the AI, preventing timestamp/value mix-ups.
+    """
+    if data.empty:
+        return "No data available for analysis."
+
+    # --- Define Key Metric Columns ---
+    pf_col, power_col, apparent_col = "", "", ""
+    phase_cols = {}
     
     if wiring_system == '3P4W':
-        cols_of_interest = [
-            'Total Avg Real Power (kW)', 'Total Avg Apparent Power (kVA)', 'Total Power Factor',
-            'L1 Avg Current (A)', 'L2 Avg Current (A)', 'L3 Avg Current (A)',
-            'L1 Avg Voltage (V)', 'L2 Avg Voltage (V)', 'L3 Avg Voltage (V)'
-        ]
+        pf_col = 'Total Power Factor'
         power_col = 'Total Avg Real Power (kW)'
+        apparent_col = 'Total Avg Apparent Power (kVA)'
+        phase_cols = {
+            'L1 Current (A)': 'L1 Avg Current (A)',
+            'L2 Current (A)': 'L2 Avg Current (A)',
+            'L3 Current (A)': 'L3 Avg Current (A)',
+            'L1 Voltage (V)': 'L1 Avg Voltage (V)',
+            'L2 Voltage (V)': 'L2 Avg Voltage (V)',
+            'L3 Voltage (V)': 'L3 Avg Voltage (V)',
+            'L1 Power Factor': 'L1 Power Factor',
+            'L2 Power Factor': 'L2 Power Factor',
+            'L3 Power Factor': 'L3 Power Factor',
+        }
     elif wiring_system == '1P2W':
-        cols_of_interest = [
-            'Avg Real Power (kW)', 'Avg Apparent Power (kVA)', 'Power Factor',
-            'Avg Current (A)', 'Avg Voltage (V)'
-        ]
+        pf_col = 'Power Factor'
         power_col = 'Avg Real Power (kW)'
+        apparent_col = 'Avg Apparent Power (kVA)'
+        phase_cols = {
+            'Current (A)': 'Avg Current (A)',
+            'Voltage (V)': 'Avg Voltage (V)',
+        }
 
-    for col in cols_of_interest:
-        if col in data.columns and not data[col].dropna().empty:
-            try:
-                col_series = data[col].dropna()
-                
-                # Filter PF stats based on power threshold to ignore idle noise
-                if 'Power Factor' in col and power_col in data.columns and not data[data[power_col] > POWER_THRESHOLD_KW].empty:
-                    col_series = data[data[power_col] > POWER_THRESHOLD_KW][col].dropna()
-                
-                if col_series.empty: continue
+    # --- 1. Peak Event Summary (Unambiguous) ---
+    summary_lines = ["## Peak Event Summary"]
+    date_format = '%a %d %b %Y, %H:%M:%S'
 
-                stats = col_series.describe()
-                trend = col_series.iloc[-1] - col_series.iloc[0]
-                line = (
-                    f"**{col}:** "
-                    f"Mean={stats['mean']:.2f}, "
-                    f"Min={stats['min']:.2f}, "
-                    f"Max={stats['max']:.2f}, "
-                    f"StdDev={stats['std']:.2f}, "
-                    f"**Trend={trend:+.2f}** (Start={col_series.iloc[0]:.2f}, End={col_series.iloc[-1]:.2f})"
-                )
-                summary_lines.append(f"- {line}")
-            except Exception:
-                pass # Skip column if stats fail
-                
-    if not summary_lines:
-        return "No detailed statistics could be generated for key metrics."
-        
+    # Find Peak kVA (MD)
+    if apparent_col in data.columns and not data[apparent_col].dropna().empty:
+        peak_kva_val = data[apparent_col].max()
+        peak_kva_time = data.loc[data[apparent_col].idxmax(), 'Datetime'].strftime(date_format)
+        summary_lines.append(f"- **Peak Demand (MD):** {peak_kva_val:.2f} kVA (at {peak_kva_time})")
+    else:
+        summary_lines.append("- **Peak Demand (MD):** N/A")
+
+    # Find Peak kW (Real Power)
+    if power_col in data.columns and not data[power_col].dropna().empty:
+        peak_kw_val = data[power_col].max()
+        peak_kw_time = data.loc[data[power_col].idxmax(), 'Datetime'].strftime(date_format)
+        summary_lines.append(f"- **Peak Real Power:** {peak_kw_val:.2f} kW (at {peak_kw_time})")
+    else:
+        summary_lines.append("- **Peak Real Power:** N/A")
+
+    # --- 2. Detailed Statistical Table ---
+    summary_lines.append("\n## Detailed Statistical Summary")
+    
+    stats_header = "| Metric | Mean | Min | Max | Std Dev (Volatility) |"
+    stats_divider = "|:---|---:|---:|---:|---:|"
+    stats_rows = [stats_header, stats_divider]
+
+    # Helper to get stats for a column
+    def get_stats_row(metric_name: str, col_name: str, data: pd.DataFrame, is_pf: bool = False):
+        if col_name in data.columns and not data[col_name].dropna().empty:
+            series = data[col_name].dropna()
+            
+            # For PF, filter by operational threshold
+            if is_pf and power_col in data.columns and not data[data[power_col] > POWER_THRESHOLD_KW].empty:
+                series = data[data[power_col] > POWER_THRESHOLD_KW][col_name].dropna()
+                if series.empty:
+                    return f"| {metric_name} | N/A (No load) | N/A | N/A | N/A |"
+            
+            stats = series.describe()
+            return f"| {metric_name} | {stats['mean']:.2f} | {stats['min']:.2f} | {stats['max']:.2f} | {stats['std']:.2f} |"
+        return f"| {metric_name} | N/A | N/A | N/A | N/A |"
+
+    # Add system-wide stats
+    stats_rows.append(get_stats_row("Total Real Power (kW)", power_col, data))
+    stats_rows.append(get_stats_row("Total Apparent Power (kVA)", apparent_col, data))
+    stats_rows.append(get_stats_row("Total Power Factor", pf_col, data, is_pf=True))
+
+    # Add phase-specific stats
+    for metric_name, col_name in phase_cols.items():
+        is_pf = 'Power Factor' in metric_name
+        stats_rows.append(get_stats_row(metric_name, col_name, data, is_pf=is_pf))
+
+    summary_lines.extend(stats_rows)
     return "\n".join(summary_lines)
 
-def get_gemini_analysis(summary_metrics: str, 
-                        detailed_stats_and_trends: str, 
-                        trend_summary: str, 
+
+def get_gemini_analysis(ai_data_context: str,
                         params_info: str, 
                         transform_log: str, 
                         additional_context: str = "") -> str:
@@ -312,15 +311,16 @@ def get_gemini_analysis(summary_metrics: str,
     Your analysis MUST be based SOLELY on the 'CLEANED (Status=0) DATA'.
 
     Core Principles:
-    - **Pattern Analysis:** Use the 'Detailed Stats & Trends' to analyze key metrics.
-    - **Equipment Health:** Interpret electrical data as indicators of mechanical health (e.g., high StdDev = volatility).
-    - **Cost Reduction:** Focus on reducing peak demand (MD) and improving power factor.
-    - **Quantitative Significance:** Refer to the absolute values in the 'Detailed Stats & Trends' to determine real-world impact.
+    - **Pattern Analysis:** Use the 'Detailed Statistical Summary' table to analyze key metrics.
+    - **Peak Events:** Use the 'Peak Event Summary' to understand the *specific* peak demand (kVA) and peak power (kW) events.
+    - **Equipment Health:** Interpret electrical data as indicators of mechanical health (e.g., high 'Std Dev' = volatility).
+    - **Cost Reduction:** Focus on reducing 'Peak Demand (MD)' and improving 'Total Power Factor'.
+    - **Quantitative Significance:** Refer to the absolute values in the tables to determine real-world impact.
     - **CRITICAL ENGINEERING FEEDBACK:** De-prioritize current imbalance recommendations if the *absolute* difference between phase currents (in Amps) is minor (e.g., less than 50A), even if the *percentage* seems high. A 20-30 Amp difference is not significant enough to warrant a 'tedious current audit'.
     
     Provide a short, informative report in Markdown format with three sections:
     1.  **Executive Summary** (2-3 bullet points)
-    2.  **Key Observations** (Use a markdown table and bullet points)
+    2.  **Key Observations** (Use a markdown table and bullet points based on the 'Detailed Statistical Summary')
     3.  **Actionable Recommendations** (Use numbered bullet points, citing standards where applicable)
     
     Address the user as a fellow process optimization engineer."""
@@ -331,14 +331,8 @@ def get_gemini_analysis(summary_metrics: str,
     **Data Transformation Log (CRITICAL CONTEXT):**
     {transform_log}
     
-    **Key Performance Indicators (Selected Period):**
-    {summary_metrics}
-    
-    **Summary of Trends & Fluctuations (Selected Period):**
-    {trend_summary}
-    
-    **Detailed Stats & Trends (Selected Period):**
-    {detailed_stats_and_trends}
+    **Data Analysis (Selected Period):**
+    {ai_data_context}
     
     **Measurement Parameters:**
     {params_info}
@@ -1019,23 +1013,17 @@ else:
                 st.sidebar.error("Cannot run analysis on an empty dataset. Widen your time filter.")
             else:
                 with st.spinner("🧠 AI is analyzing the data... This may take a moment."):
-                    # 1. KPIs from clean, filtered data
-                    # (kpi_summary was already generated above by generate_kpis())
-                    summary_metrics_text = "\n".join([f"- {key}: {value}" for key, value in kpi_summary.items() if "N/A" not in str(value)])
-                    # 2. Trend from clean, filtered data
-                    trend_summary_text = generate_trend_summary(data, wiring_system)
-                    # 3. Stats from clean, filtered data
-                    detailed_stats_text = generate_detailed_analysis_text(data, wiring_system)
-                    # 4. Measurement settings
+                    # 1. Generate the single, unambiguous data context
+                    ai_data_context = generate_ai_data_context(data, wiring_system)
+                    
+                    # 2. Measurement settings
                     params_info_text = parameters.to_string()
-                    # 5. Transformation Log
+                    
+                    # 3. Transformation Log
                     transform_log_text = generate_transform_summary(uploaded_file.name, data_raw, data_full)
-
                     
                     ai_response = get_gemini_analysis(
-                        summary_metrics_text,
-                        detailed_stats_text,
-                        trend_summary_text,
+                        ai_data_context,
                         params_info_text,
                         transform_log_text,
                         additional_context
