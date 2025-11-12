@@ -57,12 +57,21 @@ def get_rename_map(wiring_system: str) -> dict:
                     ts_map[hioki_name] = eng_name
             if 'PF' in tech_prefix:
                 ts_map[f"{tech_prefix}{phase_suffix}_Avg"] = f"{phase_prefix}Power Factor"
+            # This loop correctly maps 'PFsum_Avg' to 'Total Power Factor'
+            # We will overwrite this specific mapping below to quarantine the logger's bad value.
 
     ts_map.update({
-        # 'P_Avg[W]': 'Total Avg Real Power (W)',  <-- REMOVED (CONFLICTS WITH LOOP)
-        # 'S_Avg[VA]': 'Total Avg Apparent Power (VA)', <-- REMOVED (CONFLICTS WITH LOOP)
-        # 'Q_Avg[var]': 'Total Avg Reactive Power (VAR)', <-- REMOVED (CONFLICTS WITH LOOP)
-        # 'PF_Avg': 'Total Power Factor', <-- REMOVED (CONFLICTS WITH LOOP)
+        'P_Avg[W]': 'Total Avg Real Power (W)',    # RESTORED - Handles files using P_Avg
+        'S_Avg[VA]': 'Total Avg Apparent Power (VA)',  # RESTORED - Handles files using S_Avg
+        'Q_Avg[var]': 'Total Avg Reactive Power (VAR)',  # RESTORED - Handles files using Q_Avg
+        
+        # --- QUARANTINE BAD LOGGER DATA ---
+        # Rename the logger's bad PF calculation (from either name) to a new column.
+        # This frees up the 'Total Power Factor' name for our own correct calculation.
+        'PF_Avg': 'Total Power Factor (LOGGER)',  # CHANGED
+        'PFsum_Avg': 'Total Power Factor (LOGGER)', # ADDED
+        # ---
+        
         'P_max[W]': 'Total Max Real Power (W)',
         'S_max[VA]': 'Total Max Apparent Power (VA)',
         'Pdem+1[W]': 'Power Demand (W)', 'Pdem+sum[W]': 'Total Power Demand (W)',
