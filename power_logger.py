@@ -304,15 +304,20 @@ def get_gemini_analysis(summary_metrics: str,
     system_prompt = """You are an expert industrial energy efficiency analyst and process engineer for FMF Foods Ltd., a food manufacturing company in Fiji. Your task is to analyze power consumption data from industrial machinery at our biscuit factory in Suva. Your analysis must be framed within the context of a manufacturing environment.
     Your analysis MUST be based SOLELY on the 'CLEANED (Status=0) DATA'.
     
-    Core Principles:
+    **Report Format:**
+    - Your report must be **concise, short, and informative**.
+    - Use **bullet points** and **markdown tables** extensively to present data and observations clearly.
+    - **Cite standards:** When making recommendations (e.g., for power factor, voltage, or imbalance), you **MUST** back up your claims by referencing relevant industrial standards (e.g., IEC 61000, IEEE 519, or local utility guidelines).
+    
+    **Core Principles:**
     - **Operational Cycles:** Use the 'Summary of Trends & Fluctuations' to understand the *main* power sequence.
-    - **Pattern Analysis:** Use the 'Detailed Stats & Trends' section to analyze the specific behavior of *each* key metric (Voltage, Current, PF). Look for correlations, e.g., "Current on L1 increased, causing a voltage dip on L1."
+    - **Pattern Analysis:** Use the 'Detailed Stats & Trends' section to analyze the specific behavior of *each* key metric (Voltage, Current, PF). Look for correlations.
     - **Equipment Health:** Interpret electrical data as indicators of mechanical health. Use the 'Detailed Stats & Trends' to understand the magnitude (Mean), volatility (StdDev), and load profiles (Trend).
     - **Cost Reduction:** Link your findings directly to cost-saving opportunities by focusing on reducing peak demand (MD) and improving power factor.
     - **Quantitative Significance:** When analyzing metrics, you MUST refer to the absolute values in the 'Detailed Stats & Trends' to determine the real-world impact.
     - **CRITICAL ENGINEERING FEEDBACK:** You MUST de-prioritize current imbalance recommendations if the *absolute* difference between phase currents (in Amps) is minor (e.g., less than 50A), even if the *percentage* seems high. A 20-30 Amp difference is not significant enough to warrant a 'tedious current audit'. Focus on Peak Demand (MD) and Power Factor as the primary cost-saving drivers.
     
-    Provide a concise, actionable report in Markdown format with three sections: 1. Executive Summary, 2. Key Observations & Pattern Analysis, and 3. Actionable Recommendations. Address the user as a fellow process optimization engineer."""
+    Provide a concise, actionable report in Markdown format with three sections: 1. Executive Summary, 2. Key Observations (use tables/bullets), and 3. Actionable Recommendations (use tables/bullets and cite standards). Address the user as a fellow process optimization engineer."""
     
     user_prompt = f"""
     Good morning, Please analyze the following power consumption data for an industrial machine at our Suva facility.
@@ -341,7 +346,7 @@ def get_gemini_analysis(summary_metrics: str,
     except (KeyError, FileNotFoundError):
         return "Error: Gemini API key not found. Please add it to your Streamlit Secrets."
     
-    api_url = f"https://generativanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key={api_key}"
+    api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key={api_key}"
     
     payload = {
         "contents": [{"parts": [{"text": user_prompt}]}],
@@ -408,7 +413,9 @@ class PDF(FPDF):
 
     def chapter_body(self, body):
         self.set_font('Helvetica', '', 10)
-        self.multi_cell(0, 5, body)
+        # Encode to latin-1, replacing unsupported Unicode characters to prevent errors
+        safe_body = body.encode('latin-1', 'replace').decode('latin-1')
+        self.multi_cell(0, 5, safe_body)
         self.ln()
 
     def add_kpi_table(self, kpi_dict):
