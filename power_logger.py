@@ -168,6 +168,17 @@ def load_hioki_data(uploaded_file):
         if 'Power Factor' in col or 'Power' in col:
             data_df[col] = data_df[col].abs()
     
+    # --- USER REQUESTED FIX: Recalculate Total PF as Avg of 3 Phases ---
+    # This is more resilient than the Total P / Total S method, which fails if
+    # the total columns aren't found in the CSV.
+    if wiring_system == '3P4W':
+        phase_pf_cols = ['L1 Power Factor', 'L2 Power Factor', 'L3 Power Factor']
+        if all(c in data_df.columns for c in phase_pf_cols):
+            # Calculate row-wise mean of the three phases
+            # .abs() is already applied to these columns in the loop above (L175)
+            data_df['Total Power Factor'] = data_df[phase_pf_cols].mean(axis=1)
+    # --- END USER FIX ---
+
     # --- 3P4W CALCULATIONS & TOTALS ---
     if wiring_system == '3P4W':
         power_cols = ['L1 Avg Real Power (W)', 'L2 Avg Real Power (W)', 'L3 Avg Real Power (W)']
@@ -179,13 +190,15 @@ def load_hioki_data(uploaded_file):
             data_df['Total Avg Apparent Power (VA)'] = data_df[apparent_cols].sum(axis=1)
 
     # --- CRITICAL FIX: RECALCULATE TOTAL POWER FACTOR ---
-    # Ignore the logger's PF_Avg column if possible, as it often contains magnitude errors.
-    # Recalculate using: Abs(Real) / Abs(Apparent)
+    # This is the old vector-sum method. We will leave it as a fallback
+    # in case the per-phase PF columns aren't available but the totals are.
     if 'Total Avg Real Power (W)' in data_df.columns and 'Total Avg Apparent Power (VA)' in data_df.columns:
-        data_df['Total Power Factor'] = data_df.apply(
-            lambda row: row['Total Avg Real Power (W)'] / row['Total Avg Apparent Power (VA)'] if row['Total Avg Apparent Power (VA)'] > 0 else 0,
-            axis=1
-        )
+        # Check if our user-requested fix already ran. If not, run this one.
+        if 'Total Power Factor' not in data_df.columns:
+            data_df['Total Power Factor'] = data_df.apply(
+                lambda row: row['Total Avg Real Power (W)'] / row['Total Avg Apparent Power (VA)'] if row['Total Avg Apparent Power (VA)'] > 0 else 0,
+                axis=1
+            )
     
     # Convert all units to k-units (kW, kVA, kVAR)
     for col_name in list(data_df.columns):
