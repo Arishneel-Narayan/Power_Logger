@@ -341,7 +341,7 @@ def get_gemini_analysis(summary_metrics: str,
     except (KeyError, FileNotFoundError):
         return "Error: Gemini API key not found. Please add it to your Streamlit Secrets."
     
-    api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key={api_key}"
+    api_url = f"https://generativanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key={api_key}"
     
     payload = {
         "contents": [{"parts": [{"text": user_prompt}]}],
@@ -612,7 +612,12 @@ def generate_pdf_report(
     pdf.chapter_body(parameters.to_string())
 
     # Return as bytes
-    return pdf.output(dest='S').encode('latin-1')
+    output_data = pdf.output(dest='S')
+    if isinstance(output_data, str):
+        # Handle fpdf returning a string
+        return output_data.encode('latin-1')
+    # Handle fpdf2 returning bytes
+    return output_data
 
 
 # --- 5. Streamlit UI and Analysis Section ---
