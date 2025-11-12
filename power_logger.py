@@ -1089,7 +1089,7 @@ st.download_button(
     )
         
         # --- AI Section (Common to both) ---
-        st.sidebar.markdown("---")
+st.sidebar.markdown("---")
         st.sidebar.subheader("Add Custom AI Context")
         additional_context = st.sidebar.text_area("Provide specific details about the machine or process (optional):", help="E.g., 'This is the main dough mixer, model XYZ.' or 'The large spike at 10:00 was a planned startup.'")
 
