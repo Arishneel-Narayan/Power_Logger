@@ -394,27 +394,32 @@ def to_excel_bytes(df: pd.DataFrame) -> bytes:
 
 # This helper class creates a basic FPDF structure
 class PDF(FPDF):
+    def sanitize_text(self, text):
+        """Sanitizes text for FPDF by encoding and decoding."""
+        return str(text).encode('latin-1', 'replace').decode('latin-1')
+
     def header(self):
         self.set_font('Helvetica', 'B', 12)
-        self.cell(0, 10, 'FMF Power Consumption Analysis Report', 0, 1, 'C')
+        self.cell(0, 10, self.sanitize_text('FMF Power Consumption Analysis Report'), 0, 1, 'C')
         self.set_font('Helvetica', '', 8)
-        self.cell(0, 5, f'Generated: {pd.Timestamp.now(tz="Pacific/Fiji").strftime("%a %d %b %Y, %H:%M")}', 0, 1, 'C')
+        gen_time = f'Generated: {pd.Timestamp.now(tz="Pacific/Fiji").strftime("%a %d %b %Y, %H:%M")}'
+        self.cell(0, 5, self.sanitize_text(gen_time), 0, 1, 'C')
         self.ln(5)
 
     def footer(self):
         self.set_y(-15)
         self.set_font('Helvetica', 'I', 8)
-        self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
+        self.cell(0, 10, self.sanitize_text(f'Page {self.page_no()}'), 0, 0, 'C')
 
     def chapter_title(self, title):
         self.set_font('Helvetica', 'B', 14)
-        self.cell(0, 10, title, 0, 1, 'L')
+        self.cell(0, 10, self.sanitize_text(title), 0, 1, 'L')
         self.ln(2)
 
     def chapter_body(self, body):
         self.set_font('Helvetica', '', 10)
         # Encode to latin-1, replacing unsupported Unicode characters to prevent errors
-        safe_body = body.encode('latin-1', 'replace').decode('latin-1')
+        safe_body = self.sanitize_text(body)
         self.multi_cell(0, 5, safe_body)
         self.ln()
 
@@ -435,8 +440,8 @@ class PDF(FPDF):
                 else:
                     val_str = f"{value:.2f}"
             
-            self.cell(60, 8, str(key), 1)
-            self.cell(0, 8, str(val_str), 1) # Use the formatted string
+            self.cell(60, 8, self.sanitize_text(str(key)), 1)
+            self.cell(0, 8, self.sanitize_text(str(val_str)), 1) # Use the formatted string
             self.ln()
 
     def add_plotly_chart(self, fig, title):
