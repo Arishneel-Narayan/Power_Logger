@@ -760,7 +760,9 @@ else:
                             "Minimum Power Factor": f"{data['Power Factor'].min():.3f}",
                             "Average Power Factor": f"{avg_pf_val:.3f}" # Use the corrected average
                         }
-                        st.json(stats_pf)
+                        df_stats = pd.DataFrame(pf_stats_data).T
+                        df_stats.index.name = "Metric"
+                        st.dataframe(df_stats)
 
             with tabs[1]:
                 st.subheader("Measurement Settings")
