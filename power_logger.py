@@ -1080,13 +1080,13 @@ else:
         # This triggers if process_result is None
         st.warning("Could not process the uploaded file. Please ensure it is a valid, non-empty Hioki CSV export.")
 # Download button downloads the CLEAN (Status=0) data_full
-                st.download_button(
-                    label="📥 Download Clean Data (Excel)",
-                    data=to_excel_bytes(data_full),
-                    file_name=f"{uploaded_file.name.split('.')[0]}_processed_clean.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    help="This downloads only the data rows with Status=0, which are used for all graphs and analysis."
-                )
+st.download_button(
+    label="📥 Download Clean Data (Excel)",
+    data=to_excel_bytes(data_full),
+    file_name=f"{uploaded_file.name.split('.')[0]}_processed_clean.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    help="This downloads only the data rows with Status=0, which are used for all graphs and analysis."
+    )
         
         # --- AI Section (Common to both) ---
         st.sidebar.markdown("---")
