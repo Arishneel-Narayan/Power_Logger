@@ -6,9 +6,8 @@ import plotly.graph_objects as go
 from typing import Tuple, Optional, Dict
 import requests
 import io
-import markdown  # <-- ADDED: To convert AI's markdown to HTML
-# from fpdf import FPDF  <-- REMOVED: No longer using fpdf
-# import plotly.io as pio <-- REMOVED: No longer using pio for image export
+import markdown # For HTML report
+import plotly.io as pio
 
 # --- 1. Core Data Processing Engine ---
 
@@ -302,23 +301,29 @@ def get_gemini_analysis(summary_metrics: str,
                         additional_context: str = "") -> str:
     """Contacts the Gemini API for an expert analysis."""
     
-    system_prompt = """You are an expert industrial energy efficiency analyst and process engineer for FMF Foods Ltd., a food manufacturing company in Fiji. Your task is to analyze power consumption data from industrial machinery at our biscuit factory in Suva. Your analysis must be framed within the context of a manufacturing environment.
+    # UPDATED SYSTEM PROMPT
+    system_prompt = """You are an expert industrial energy efficiency analyst and process engineer for FMF Foods Ltd. Your task is to analyze power consumption data from industrial machinery at our biscuit factory.
+    
+    Your analysis MUST be:
+    1.  **Concise:** Use bullet points and markdown tables. Avoid long paragraphs.
+    2.  **Actionable:** Provide clear, prioritized recommendations.
+    3.  **Standards-Based:** When possible, cite relevant standards (e.g., IEEE, IEC, NEMA) to support your observations (e.g., voltage imbalance, power factor).
+    
     Your analysis MUST be based SOLELY on the 'CLEANED (Status=0) DATA'.
+
+    Core Principles:
+    - **Pattern Analysis:** Use the 'Detailed Stats & Trends' to analyze key metrics.
+    - **Equipment Health:** Interpret electrical data as indicators of mechanical health (e.g., high StdDev = volatility).
+    - **Cost Reduction:** Focus on reducing peak demand (MD) and improving power factor.
+    - **Quantitative Significance:** Refer to the absolute values in the 'Detailed Stats & Trends' to determine real-world impact.
+    - **CRITICAL ENGINEERING FEEDBACK:** De-prioritize current imbalance recommendations if the *absolute* difference between phase currents (in Amps) is minor (e.g., less than 50A), even if the *percentage* seems high. A 20-30 Amp difference is not significant enough to warrant a 'tedious current audit'.
     
-    **Report Format:**
-    - Your report must be **concise, short, and informative**.
-    - Use **bullet points** and **markdown tables** extensively to present data and observations clearly.
-    - **Cite standards:** When making recommendations (e.g., for power factor, voltage, or imbalance), you **MUST** back up your claims by referencing relevant industrial standards (e.g., IEC 61000, IEEE 519, or local utility guidelines).
+    Provide a short, informative report in Markdown format with three sections:
+    1.  **Executive Summary** (2-3 bullet points)
+    2.  **Key Observations** (Use a markdown table and bullet points)
+    3.  **Actionable Recommendations** (Use numbered bullet points, citing standards where applicable)
     
-    **Core Principles:**
-    - **Operational Cycles:** Use the 'Summary of Trends & Fluctuations' to understand the *main* power sequence.
-    - **Pattern Analysis:** Use the 'Detailed Stats & Trends' section to analyze the specific behavior of *each* key metric (Voltage, Current, PF). Look for correlations.
-    - **Equipment Health:** Interpret electrical data as indicators of mechanical health. Use the 'Detailed Stats & Trends' to understand the magnitude (Mean), volatility (StdDev), and load profiles (Trend).
-    - **Cost Reduction:** Link your findings directly to cost-saving opportunities by focusing on reducing peak demand (MD) and improving power factor.
-    - **Quantitative Significance:** When analyzing metrics, you MUST refer to the absolute values in the 'Detailed Stats & Trends' to determine the real-world impact.
-    - **CRITICAL ENGINEERING FEEDBACK:** You MUST de-prioritize current imbalance recommendations if the *absolute* difference between phase currents (in Amps) is minor (e.g., less than 50A), even if the *percentage* seems high. A 20-30 Amp difference is not significant enough to warrant a 'tedious current audit'. Focus on Peak Demand (MD) and Power Factor as the primary cost-saving drivers.
-    
-    Provide a concise, actionable report in Markdown format with three sections: 1. Executive Summary, 2. Key Observations (use tables/bullets), and 3. Actionable Recommendations (use tables/bullets and cite standards). Address the user as a fellow process optimization engineer."""
+    Address the user as a fellow process optimization engineer."""
     
     user_prompt = f"""
     Good morning, Please analyze the following power consumption data for an industrial machine at our Suva facility.
@@ -340,13 +345,14 @@ def get_gemini_analysis(summary_metrics: str,
     """
     if additional_context:
         user_prompt += f"\n**Additional Engineer's Context:**\n{additional_context}"
-    user_prompt += "\nBased on all this information, please generate a report with your insights and recommendations for process optimization."
+    user_prompt += "\nBased on all this information, please generate your concise, standards-based report."
     
     try:
         api_key = st.secrets["GEMINI_API_KEY"]
     except (KeyError, FileNotFoundError):
         return "Error: Gemini API key not found. Please add it to your Streamlit Secrets."
     
+    # Use gemini-2.5-pro and corrected URL spelling
     api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key={api_key}"
     
     payload = {
@@ -391,36 +397,7 @@ def to_excel_bytes(df: pd.DataFrame) -> bytes:
         df.to_excel(writer, index=False, sheet_name='Processed_Data')
     return output.getvalue()
 
-# --- 4. NEW: HTML Report Generation ---
-
-def kpi_dict_to_html(kpi_dict: dict) -> str:
-    """Helper function to convert a KPI dictionary to an HTML table."""
-    html = '<table class="min-w-full divide-y divide-gray-200 border border-gray-300">'
-    html += '<thead class="bg-gray-50"><tr>'
-    html += '<th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Metric</th>'
-    html += '<th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Value</th>'
-    html += '</tr></thead><tbody class="bg-white divide-y divide-gray-200">'
-
-    for key, value in kpi_dict.items():
-        # Format numbers, leave strings as-is
-        val_str = value
-        if isinstance(value, (int, float)):
-            if "Avg. Total PF" in key:
-                val_str = f"{value:.3f}"
-            elif "Imbalance" in key:
-                val_str = f"{value:.1f} %"
-            else:
-                val_str = f"{value:.2f}"
-        
-        # Handle pre-formatted strings from generate_kpis
-        elif isinstance(value, str) and ("kW" in value or "kVA" in value or "kWh" in value):
-             val_str = value # It's already formatted
-
-        html += f'<tr><td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{key}</td>'
-        html += f'<td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{val_str}</td></tr>'
-
-    html += '</tbody></table>'
-    return html
+# --- 4. HTML Report Generation Function ---
 
 def generate_html_report(
     file_name: str,
@@ -431,144 +408,145 @@ def generate_html_report(
     ai_analysis: str,
     data_full: pd.DataFrame # Use full, clean data for graphs
 ) -> bytes:
-    """Generates a self-contained HTML report."""
+    """Generates a self-contained HTML report with embedded graphs."""
     
-    # Convert AI's markdown response to HTML
-    ai_analysis_html = markdown.markdown(ai_analysis, extensions=['tables'])
+    # Helper to create a KPI table
+    def kpi_to_html_table(kpi_dict: dict) -> str:
+        rows = ""
+        for key, value in kpi_dict.items():
+            # Format numbers, leave strings as-is
+            val_str = value
+            if isinstance(value, (int, float)):
+                if key == "Avg. Total PF":
+                    val_str = f"{value:.3f}"
+                elif key == "Max Current Imbalance":
+                     val_str = f"{value:.1f} %"
+                else:
+                    val_str = f"{value:.2f}"
+            rows += f"<tr><th>{key}</th><td>{val_str}</td></tr>"
+        return f"<table>{rows}</table>"
 
-    # Convert KPI dicts to HTML tables
-    kpi_selected_html = kpi_dict_to_html(kpi_summary_selected)
-    kpi_full_html = kpi_dict_to_html(kpi_summary_full)
+    # Helper to generate and embed a graph
+    def get_graph_html(fig, title: str) -> str:
+        if fig is None:
+            return f"<h3>{title}</h3><p>Data not available to generate this graph.</p>"
+        graph_html = pio.to_html(fig, full_html=False, include_plotlyjs='cdn')
+        return f"<h3>{title}</h3>{graph_html}"
 
-    # --- Generate Plotly graphs as HTML ---
+    # --- Generate all graphs from FULL data ---
     graphs_html = ""
     
-    # Use full, clean data for graphs
     if wiring_system == '1P2W':
         plot_cols = [col for col in ['Avg Real Power (kW)', 'Avg Apparent Power (kVA)', 'Avg Reactive Power (kVAR)'] if col in data_full.columns]
+        fig_power = None
         if plot_cols:
-            fig_power = px.line(data_full, x='Datetime', y=plot_cols, title="Power Consumption Over Time (Full Period)")
+            fig_power = px.line(data_full, x='Datetime', y=plot_cols, template="plotly") # Add template
             fig_power.update_layout(xaxis_title="Date & Time", yaxis_title="Power (kW, kVA, kVAR)", xaxis_tickformat="%a %d %b\n%H:%M")
-            graphs_html += f'<div class="mt-6">{fig_power.to_html(full_html=False, include_plotlyjs="cdn")}</div>'
+        graphs_html += get_graph_html(fig_power, "Power Consumption Over Time (Full Period)")
 
-        if 'Power Factor' in data.columns:
-            fig_pf = px.line(data_full, x='Datetime', y='Power Factor', title="Power Factor Over Time (Full Period)")
+        fig_pf = None
+        if 'Power Factor' in data_full.columns:
+            fig_pf = px.line(data_full, x='Datetime', y='Power Factor', template="plotly") # Add template
             fig_pf.add_hline(y=0.95, line_dash="dash", line_color="red")
             fig_pf.update_layout(xaxis_title="Date & Time", yaxis_title="Power Factor", xaxis_tickformat="%a %d %b\n%H:%M")
-            graphs_html += f'<div class="mt-6">{fig_pf.to_html(full_html=False, include_plotlyjs="cdn")}</div>'
+        graphs_html += get_graph_html(fig_pf, "Power Factor Over Time (Full Period)")
     
     elif wiring_system == '3P4W':
+        fig_power_total = None
         total_power_cols = [c for c in ['Total Avg Real Power (kW)', 'Total Avg Apparent Power (kVA)', 'Total Avg Reactive Power (kVAR)'] if c in data_full.columns]
         if total_power_cols:
-            fig_power_total = px.line(data_full, x='Datetime', y=total_power_cols, title="Total System Power (Full Period)")
+            fig_power_total = px.line(data_full, x='Datetime', y=total_power_cols, template="plotly") # Add template
             fig_power_total.update_layout(xaxis_title="Date & Time", yaxis_title="Power (kW, kVA, kVAR)", xaxis_tickformat="%a %d %b\n%H:%M")
-            graphs_html += f'<div class="mt-6">{fig_power_total.to_html(full_html=False, include_plotlyjs="cdn")}</div>'
+        graphs_html += get_graph_html(fig_power_total, "Total System Power (Full Period)")
 
+        fig_current = None
         current_cols_all = [f'{p} {s} Current (A)' for p in ['L1', 'L2', 'L3'] for s in ['Min', 'Avg', 'Max']]
         plot_cols_current = [c for c in current_cols_all if c in data_full.columns]
         if plot_cols_current:
-            fig_current = px.line(data_full, x='Datetime', y=plot_cols_current, title="Current Operational Envelope (Full Period)")
-            fig_current.update_layout(xaxis_title="Date & Time", yaxis_title="Current (A)", xaxis_tickformat="%a %d %b\n%H:%M")
-            graphs_html += f'<div class="mt-6">{fig_current.to_html(full_html=False, include_plotlyjs="cdn")}</div>'
+            fig_current = px.line(data_full, x='Datetime', y=plot_cols_current, template="plotly") # Add template
+            fig_current.update_layout(xaxis_title="Date &Time", yaxis_title="Current (A)", xaxis_tickformat="%a %d %b\n%H:%M")
+        graphs_html += get_graph_html(fig_current, "Current Operational Envelope (Full Period)")
 
+        fig_voltage = None
         voltage_cols_all = [f'{p} {s} Voltage (V)' for p in ['L1', 'L2', 'L3'] for s in ['Min', 'Avg', 'Max']]
         plot_cols_voltage = [c for c in voltage_cols_all if c in data_full.columns]
         if plot_cols_voltage:
-            fig_voltage = px.line(data_full, x='Datetime', y=plot_cols_voltage, title="Voltage Operational Envelope (Full Period)")
+            fig_voltage = px.line(data_full, x='Datetime', y=plot_cols_voltage, template="plotly") # Add template
             fig_voltage.update_layout(xaxis_title="Date & Time", yaxis_title="Voltage (V)", xaxis_tickformat="%a %d %b\n%H:%M")
-            graphs_html += f'<div class="mt-6">{fig_voltage.to_html(full_html=False, include_plotlyjs="cdn")}</div>'
+        graphs_html += get_graph_html(fig_voltage, "Voltage Operational Envelope (Full Period)")
             
+        fig_pf_phase = None
         pf_cols = [c for c in ['L1 Power Factor', 'L2 Power Factor', 'L3 Power Factor', 'Total Power Factor'] if c in data_full.columns]
         if pf_cols:
-            fig_pf_phase = px.line(data_full, x='Datetime', y=pf_cols, title="Power Factor per Phase (Full Period)")
+            fig_pf_phase = px.line(data_full, x='Datetime', y=pf_cols, template="plotly") # Add template
             fig_pf_phase.update_layout(xaxis_title="Date &Time", yaxis_title="Power Factor", xaxis_tickformat="%a %d %b\n%H:%M")
-            graphs_html += f'<div class="mt-6">{fig_pf_phase.to_html(full_html=False, include_plotlyjs="cdn")}</div>'
-
-    # --- Build the final HTML string ---
+        graphs_html += get_graph_html(fig_pf_phase, "Power Factor per Phase (Full Period)")
     
+    # --- Convert Markdown to HTML ---
+    ai_analysis_html = markdown.markdown(ai_analysis, extensions=['tables'])
+    
+    # --- Get Other HTML Elements ---
+    kpi_selected_html = kpi_to_html_table(kpi_summary_selected)
+    kpi_full_html = kpi_to_html_table(kpi_summary_full)
+    parameters_html = parameters.to_html()
+    
+    # --- Assemble Final HTML ---
     html_template = f"""
-    <!DOCTYPE html>
-    <html lang="en">
+    <html>
     <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>FMF Power Report: {file_name}</title>
-        <script src="https://cdn.tailwindcss.com"></script>
+        <title>FMF Power Analysis: {file_name}</title>
         <style>
-            /* Simple styles for markdown-generated tables */
-            .prose table {{
-                width: 100%;
-                border-collapse: collapse;
-                border: 1px solid #d1d5db; /* gray-300 */
-            }}
-            .prose th, .prose td {{
-                border: 1px solid #d1d5db; /* gray-300 */
-                padding: 8px 12px;
-            }}
-            .prose th {{
-                background-color: #f9fafb; /* gray-50 */
-                font-weight: 600;
-            }}
-            /* Container for graphs */
-            .graph-container {{
-                page-break-inside: avoid;
-                margin-top: 24px;
-            }}
-            @media print {{
-                body {{
-                    -webkit-print-color-adjust: exact;
-                    print-color-adjust: exact;
-                }}
-                .no-print {{
-                    display: none;
-                }}
-            }}
+            body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0 auto; max-width: 1200px; padding: 20px; }}
+            h1, h2, h3 {{ color: #004a99; }}
+            h1 {{ border-bottom: 2px solid #004a99; padding-bottom: 10px; }}
+            h2 {{ border-bottom: 1px solid #ccc; padding-bottom: 5px; }}
+            table {{ border-collapse: collapse; width: 60%; margin-bottom: 20px; }}
+            th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
+            th {{ background-color: #f2f2f2; font-weight: bold; }}
+            pre {{ background-color: #f8f8f8; padding: 10px; border: 1px solid #ddd; border-radius: 5px; }}
+            code {{ font-family: monospace; }}
+            .container {{ display: grid; grid-template-columns: 1fr 1fr; gap: 40px; }}
+            .full-width {{ grid-column: 1 / -1; }}
+            .kpi-section {{ break-inside: avoid; }}
+            /* Styles for AI-generated tables */
+            .ai-analysis table {{ width: 100%; }}
+            .ai-analysis th {{ background-color: #e0ebf5; }}
         </style>
     </head>
-    <body class="bg-gray-100 p-4 md:p-8">
-        <div class="max-w-4xl mx-auto bg-white p-8 md:p-12 rounded-lg shadow-lg">
-            
-            <div class="text-center border-b pb-4">
-                <h1 class="text-3xl font-bold text-gray-800">FMF Power Consumption Analysis</h1>
-                <p class="text-lg text-gray-600 mt-2">File: {file_name}</p>
-                <p class="text-sm text-gray-500 mt-1">Generated: {pd.Timestamp.now(tz="Pacific/Fiji").strftime("%a %d %b %Y, %H:%M")}</p>
+    <body>
+        <h1>FMF Power Consumption Analysis</h1>
+        <p><strong>File:</strong> {file_name}</p>
+        <p><strong>Generated:</strong> {pd.Timestamp.now(tz="Pacific/Fiji").strftime("%a %d %b %Y, %H:%M")}</p>
+        
+        <div class="full-width">
+            <h2>1. AI-Powered Analysis</h2>
+            <div class="ai-analysis">
+                {ai_analysis_html}
             </div>
-
-            <div class="mt-8">
-                <h2 class="text-2xl font-semibold text-gray-700 border-b pb-2">1. AI-Powered Analysis</h2>
-                <div class="prose max-w-none mt-4">
-                    {ai_analysis_html}
-                </div>
-            </div>
-
-            <div class="mt-8" style="page-break-inside: avoid;">
-                <h2 class="text-2xl font-semibold text-gray-700 border-b pb-2">2. Key Performance Indicators (KPIs)</h2>
-                <h3 class="text-lg font-medium text-gray-600 mt-4">Metrics for Selected Period</h3>
-                <div class="mt-2">
-                    {kpi_selected_html}
-                </div>
-                <h3 class="text-lg font-medium text-gray-600 mt-6">Metrics for Full Period (All Status=0 Data)</h3>
-                <div class="mt-2">
-                    {kpi_full_html}
-                </div>
-            </div>
-
-            <div class="mt-8" style="page-break-before: always;">
-                <h2 class="text-2xl font-semibold text-gray-700 border-b pb-2">3. Full Period Graphs</h2>
-                <div class="text-sm p-4 bg-blue-50 text-blue-700 rounded-md no-print">
-                    <strong>Note:</strong> Graphs may be interactive. For PDF export, use your browser's "Print to PDF" function.
-                </div>
-                {graphs_html}
-            </div>
-
-            <div class="mt-8" style="page-break-before: always;">
-                <h2 class="text-2xl font-semibold text-gray-700 border-b pb-2">4. Measurement Settings</h2>
-                <pre class="bg-gray-100 p-4 rounded-md text-xs overflow-x-auto mt-4">
-{parameters.to_string()}
-                </pre>
-            </div>
-
         </div>
+
+        <h2>2. Key Performance Indicators (KPIs)</h2>
+        <div class="container">
+            <div class="kpi-section">
+                <h3>Metrics for Selected Period</h3>
+                {kpi_selected_html}
+            </div>
+            <div class="kpi-section">
+                <h3>Metrics for Full Period (All Status=0 Data)</h3>
+                {kpi_full_html}
+            </div>
+        </div>
+
+        <div class="full-width">
+            <h2>3. Full Period Graphs</h2>
+            {graphs_html}
+        </div>
+        
+        <div class="full-width">
+            <h2>4. Measurement Settings</h2>
+            {parameters_html}
+        </div>
+        
     </body>
     </html>
     """
@@ -745,7 +723,7 @@ else:
                 if plot_cols:
                     st.subheader("Power Consumption Over Time")
                     st.info("This graph shows the Real (useful work), Apparent (total supplied), and Reactive (wasted) power. Look for high Apparent or Reactive power relative to Real power, which indicates electrical inefficiency.")
-                    fig_power = px.line(data, x='Datetime', y=plot_cols)
+                    fig_power = px.line(data, x='Datetime', y=plot_cols, template="plotly") # Add template
                     
                     # --- GRAPH FORMATTING ---
                     fig_power.update_layout(
@@ -767,7 +745,7 @@ else:
                 if 'Power Factor' in data.columns:
                     st.subheader("Power Factor Over Time")
                     st.info("Power Factor is an efficiency score (Real Power / Apparent Power). Values below 0.95 (the red line) can lead to utility penalties and indicate wasted energy.")
-                    fig_pf = px.line(data, x='Datetime', y='Power Factor')
+                    fig_pf = px.line(data, x='Datetime', y='Power Factor', template="plotly") # Add template
                     fig_pf.add_hline(y=0.95, line_dash="dash", line_color="red")
                     
                     # --- GRAPH FORMATTING ---
@@ -845,7 +823,11 @@ else:
                     if daily_data.empty:
                         st.warning("No data found for the selected day in the current time filter. Try expanding the time filter.")
                     else:
-                        fig = make_subplots(rows=4, cols=1, shared_xaxes=True, subplot_titles=("Voltage Envelope (V)", "Current Envelope (A)", "Real Power (kW)", "Power Factor"))
+                        fig = make_subplots(
+                            rows=4, cols=1, shared_xaxes=True, 
+                            subplot_titles=("Voltage Envelope (V)", "Current Envelope (A)", "Real Power (kW)", "Power Factor")
+                        )
+                        fig.update_layout(template="plotly") # Add template
 
                         # Plot Voltage
                         for i in range(1, 4):
@@ -891,7 +873,7 @@ else:
                 current_cols_all = [f'{p} {s} Current (A)' for p in ['L1', 'L2', 'L3'] for s in ['Min', 'Avg', 'Max']]
                 plot_cols = [c for c in current_cols_all if c in data.columns]
                 if plot_cols:
-                    fig = px.line(data, x='Datetime', y=plot_cols)
+                    fig = px.line(data, x='Datetime', y=plot_cols, template="plotly") # Add template
                     
                     # --- GRAPH FORMATTING ---
                     fig.update_layout(
@@ -912,7 +894,7 @@ else:
                 voltage_cols_all = [f'{p} {s} Voltage (V)' for p in ['L1', 'L2', 'L3'] for s in ['Min', 'Avg', 'Max']]
                 plot_cols = [c for c in voltage_cols_all if c in data.columns]
                 if plot_cols:
-                    fig = px.line(data, x='Datetime', y=plot_cols)
+                    fig = px.line(data, x='Datetime', y=plot_cols, template="plotly") # Add template
                     
                     # --- GRAPH FORMATTING ---
                     fig.update_layout(
@@ -932,7 +914,7 @@ else:
                 st.info("These charts show the Real (useful work), Apparent (total), and Reactive (wasted) power. The top chart shows the total system power, while the bottom chart breaks down the real power by phase to identify imbalances in work being done.")
                 total_power_cols = [c for c in ['Total Avg Real Power (kW)', 'Total Avg Apparent Power (kVA)', 'Total Avg Reactive Power (kVAR)'] if c in data.columns]
                 if total_power_cols:
-                    fig = px.line(data, x='Datetime', y=total_power_cols, title="Total System Power")
+                    fig = px.line(data, x='Datetime', y=total_power_cols, title="Total System Power", template="plotly") # Add template
                     
                     # --- GRAPH FORMATTING ---
                     fig.update_layout(
@@ -947,7 +929,7 @@ else:
 
                 phase_power_cols = [c for c in ['L1 Avg Real Power (kW)', 'L2 Avg Real Power (kW)', 'L3 Avg Real Power (kW)'] if c in data.columns]
                 if phase_power_cols:
-                    fig2 = px.line(data, x='Datetime', y=phase_power_cols, title="Real Power per Phase")
+                    fig2 = px.line(data, x='Datetime', y=phase_power_cols, title="Real Power per Phase", template="plotly") # Add template
                     
                     # --- GRAPH FORMATTING ---
                     fig2.update_layout(
@@ -969,7 +951,7 @@ else:
                 # --- END FIX ---
                 
                 if pf_cols:
-                    fig = px.line(data, x='Datetime', y=pf_cols)
+                    fig = px.line(data, x='Datetime', y=pf_cols, template="plotly") # Add template
                     
                     # --- GRAPH FORMATTING ---
                     fig.update_layout(
@@ -1039,30 +1021,7 @@ else:
                 with st.spinner("🧠 AI is analyzing the data... This may take a moment."):
                     # 1. KPIs from clean, filtered data
                     # (kpi_summary was already generated above by generate_kpis())
-                    
-                    # Create a text version of KPIs for the AI, formatting the numbers
-                    summary_metrics_text_list = []
-                    for key, value in kpi_summary.items():
-                        if "N/A" in str(value): continue
-                        
-                        val_str = value
-                        if isinstance(value, (int, float)):
-                            if key == "Avg. Total PF":
-                                val_str = f"{value:.3f}"
-                            elif key == "Max Current Imbalance":
-                                val_str = f"{value:.1f} %"
-                            else:
-                                # Default formatting for other string-based numbers
-                                val_str = str(value) 
-                        
-                        # Handle pre-formatted strings
-                        elif isinstance(value, str):
-                             val_str = value
-
-                        summary_metrics_text_list.append(f"- {key}: {val_str}")
-                    
-                    summary_metrics_text = "\n".join(summary_metrics_text_list)
-                     
+                    summary_metrics_text = "\n".join([f"- {key}: {value}" for key, value in kpi_summary.items() if "N/A" not in str(value)])
                     # 2. Trend from clean, filtered data
                     trend_summary_text = generate_trend_summary(data, wiring_system)
                     # 3. Stats from clean, filtered data
@@ -1083,11 +1042,11 @@ else:
                     )
                     st.session_state['ai_analysis'] = ai_response
                     
-                    # --- Save data for PDF generation ---
+                    # --- Save data for HTML report generation ---
                     st.session_state['kpi_summary_selected'] = kpi_summary
                     # Generate and save full-period KPIs
                     st.session_state['kpi_summary_full'] = generate_kpis(data_full, wiring_system)
-                    st.session_state['pdf_ready'] = True
+                    st.session_state['report_ready'] = True
                     # --- END ---
 
 
@@ -1110,10 +1069,10 @@ else:
                 help="Downloads only the text-based AI analysis."
             )
             
-            # Button 2: Download Full PDF
-            if st.session_state.get('pdf_ready', False):
+            # Button 2: Download Full HTML Report
+            if st.session_state.get('report_ready', False):
                 with st.spinner("Building HTML Report..."):
-                    pdf_bytes = generate_html_report(
+                    html_bytes = generate_html_report(
                         file_name=uploaded_file.name,
                         parameters=parameters,
                         wiring_system=wiring_system,
@@ -1125,10 +1084,10 @@ else:
                 
                 dl_col2.download_button(
                     label="📕 Download Full HTML Report",
-                    data=pdf_bytes,
+                    data=html_bytes,
                     file_name=f"{uploaded_file.name.split('.')[0]}_analysis_report.html",
                     mime="text/html",
-                    help="Download this HTML file, open it in your browser, and use 'Print to PDF' for a high-quality report."
+                    help="Downloads the complete report with AI analysis, KPIs, and all graphs. Open in browser and 'Print to PDF'."
                 )
             # --- END DOWNLOADS ---
 
