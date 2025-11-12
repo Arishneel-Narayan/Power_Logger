@@ -418,8 +418,18 @@ class PDF(FPDF):
         self.ln()
         self.set_font('Helvetica', '', 10)
         for key, value in kpi_dict.items():
+            # Format numbers for PDF, leave strings as-is
+            val_str = value
+            if isinstance(value, (int, float)):
+                if key == "Avg. Total PF":
+                    val_str = f"{value:.3f}"
+                elif key == "Max Current Imbalance":
+                     val_str = f"{value:.1f} %"
+                else:
+                    val_str = f"{value:.2f}"
+            
             self.cell(60, 8, str(key), 1)
-            self.cell(0, 8, str(value), 1)
+            self.cell(0, 8, str(val_str), 1) # Use the formatted string
             self.ln()
 
     def add_plotly_chart(self, fig, title):
@@ -437,7 +447,7 @@ class PDF(FPDF):
             self.set_text_color(0, 0, 0)
         self.ln(5)
 
-# --- NEW: Refactored KPI Generation ---
+# --- CORRECTED: Refactored KPI Generation ---
 def generate_kpis(data: pd.DataFrame, wiring_system: str) -> dict:
     """Calculates the main KPI dictionary from a given dataframe."""
     kpi_summary = {}
@@ -469,7 +479,7 @@ def generate_kpis(data: pd.DataFrame, wiring_system: str) -> dict:
         kpi_summary = { 
             "Analysis Mode": "Single-Phase", "Total Consumed Energy": f"{total_kwh:.2f} kWh",
             "Peak Demand (MD)": f"{peak_kva:.2f} kVA", "Average Power Draw": f"{avg_kw:.2f} kW",
-            "Avg. Total PF": f"{avg_pf:.3f}"
+            "Avg. Total PF": avg_pf  # <-- FIX: Store raw float, not string
         }
         
     elif wiring_system == '3P4W':
@@ -491,7 +501,8 @@ def generate_kpis(data: pd.DataFrame, wiring_system: str) -> dict:
 
         kpi_summary = { 
             "Analysis Mode": "Three-Phase", "Avg. Total Power": f"{avg_power_kw:.2f} kW",
-            "Peak Demand (MD)": f"{peak_kva_3p:.2f} kVA", "Avg. Total PF": f"{avg_pf:.3f}",
+            "Peak Demand (MD)": f"{peak_kva_3p:.2f} kVA",
+            "Avg. Total PF": avg_pf,  # <-- FIX: Store raw float, not string
             "Max Current Imbalance": f"{imbalance:.1f} %"
         }
     return kpi_summary
@@ -1006,7 +1017,30 @@ else:
                 with st.spinner("🧠 AI is analyzing the data... This may take a moment."):
                     # 1. KPIs from clean, filtered data
                     # (kpi_summary was already generated above by generate_kpis())
-                    summary_metrics_text = "\n".join([f"- {key}: {value}" for key, value in kpi_summary.items() if "N/A" not in str(value)])
+                    
+                    # Create a text version of KPIs for the AI, formatting the numbers
+                    summary_metrics_text_list = []
+                    for key, value in kpi_summary.items():
+                        if "N/A" in str(value): continue
+                        
+                        val_str = value
+                        if isinstance(value, (int, float)):
+                            if key == "Avg. Total PF":
+                                val_str = f"{value:.3f}"
+                            elif key == "Max Current Imbalance":
+                                val_str = f"{value:.1f} %"
+                            else:
+                                # Default formatting for other string-based numbers
+                                val_str = str(value) 
+                        
+                        # Handle pre-formatted strings
+                        elif isinstance(value, str):
+                             val_str = value
+
+                        summary_metrics_text_list.append(f"- {key}: {val_str}")
+                    
+                    summary_metrics_text = "\n".join(summary_metrics_text_list)
+                     
                     # 2. Trend from clean, filtered data
                     trend_summary_text = generate_trend_summary(data, wiring_system)
                     # 3. Stats from clean, filtered data
