@@ -576,7 +576,68 @@ def generate_html_report(
     return html_template.encode('utf-8')
 
 
-# --- 5. Streamlit UI and Analysis Section ---
+# --- 5. KPI Generation Function (Restored) ---
+def generate_kpis(data: pd.DataFrame, wiring_system: str) -> dict:
+    """Calculates the main KPI dictionary from a given dataframe."""
+    kpi_summary = {}
+    if data.empty:
+        return {"Error": "No data"}
+    
+    # Helper to calculate Average PF safely, using the absolute power threshold
+    def calc_avg_pf(df, power_col, pf_col):
+        if power_col in df.columns and pf_col in df.columns:
+            # Filter for data rows where power is above the 1.0 kW threshold
+            operational_data = df[df[power_col] > POWER_THRESHOLD_KW]
+            if not operational_data.empty:
+                operational_pf = operational_data[pf_col].dropna()
+                return operational_pf.mean() if not operational_pf.empty else 0
+        return 0
+
+    if wiring_system == '1P2W':
+        total_kwh = 0
+        energy_col = 'Consumed Real Energy (Wh)'
+        if energy_col in data.columns and not data[energy_col].dropna().empty:
+            energy_vals = data[energy_col].dropna()
+            if len(energy_vals) > 1: total_kwh = (energy_vals.iloc[-1] - energy_vals.iloc[0]) / 1000
+        
+        peak_kva = data['Avg Apparent Power (kVA)'].max() if 'Avg Apparent Power (kVA)' in data.columns else 0
+        avg_kw = data['Avg Real Power (kW)'].abs().mean() if 'Avg Real Power (kW)' in data.columns else 0
+        
+        avg_pf = calc_avg_pf(data, 'Avg Real Power (kW)', 'Power Factor')
+        
+        kpi_summary = { 
+            "Analysis Mode": "Single-Phase", "Total Consumed Energy": f"{total_kwh:.2f} kWh",
+            "Peak Demand (MD)": f"{peak_kva:.2f} kVA", "Average Power Draw": f"{avg_kw:.2f} kW",
+            "Avg. Total PF": avg_pf  # <-- Store raw float
+        }
+        
+    elif wiring_system == '3P4W':
+        avg_power_kw = data['Total Avg Real Power (kW)'].mean() if 'Total Avg Real Power (kW)' in data.columns else 0
+        
+        avg_pf = calc_avg_pf(data, 'Total Avg Real Power (kW)', 'Total Power Factor')
+
+        peak_kva_3p = 0
+        if 'Total Max Apparent Power (kVA)' in data.columns:
+             peak_kva_3p = data['Total Max Apparent Power (kVA)'].max()
+        elif 'Total Avg Apparent Power (kVA)' in data.columns:
+             peak_kva_3p = data['Total Avg Apparent Power (kVA)'].max()
+
+        imbalance = 0
+        current_cols_avg = ['L1 Avg Current (A)', 'L2 Avg Current (A)', 'L3 Avg Current (A)']
+        if all(c in data.columns for c in current_cols_avg):
+            avg_currents = data[current_cols_avg].mean()
+            if avg_currents.mean() > 0: imbalance = (avg_currents.max() - avg_currents.min()) / avg_currents.mean() * 100
+
+        kpi_summary = { 
+            "Analysis Mode": "Three-Phase", "Avg. Total Power": f"{avg_power_kw:.2f} kW",
+            "Peak Demand (MD)": f"{peak_kva_3p:.2f} kVA",
+            "Avg. Total PF": avg_pf,  # <-- Store raw float
+            "Max Current Imbalance": f"{imbalance:.1f} %"
+        }
+    return kpi_summary
+
+
+# --- 6. Streamlit UI and Analysis Section ---
 st.set_page_config(layout="wide", page_title="FMF Power Consumption Analysis")
 st.title("⚡ FMF Power Consumption Analysis Dashboard")
 
