@@ -2,6 +2,5 @@ streamlit
 pandas
 plotly
 requests
+markdown
 openpyxl
-fpdf2
-kaleido
