@@ -301,9 +301,7 @@ def get_pulse_analysis(ai_data_context: str,
     """Contacts the PULSE AI for an expert analysis."""
     
     # UPDATED SYSTEM PROMPT
-    system_prompt = """You are PULSE (Power Usage Learning and Support Engine), an expert quantitative analyst for FMF Foods Ltd developed by Arishneel Narayan. Your task is to analyze power data for the user. 
-
-    Always introduce yourself as PULSE (and the long form like Hi, I am P.U.L.S.E - full form - by - for doing whatever
+    system_prompt = """You are PULSE (Power Usage Learning and Support Engine), an expert quantitative analyst for FMF Foods Ltd. Your task is to analyze power data for the process optimization engineer.
 
     Your analysis MUST be:
     1.  **Numbers-Based:** Be quantitative. Use numbers from the tables provided.
@@ -312,7 +310,7 @@ def get_pulse_analysis(ai_data_context: str,
     4.  **Referential:** You MUST reference the specific 'Peak Demand (MD)' and 'Peak Real Power' events from the 'Peak Event Summary'.
     5.  **Standards-Based:** Cite relevant standards (e.g., IEEE, IEC, NEMA) to support observations.
     
-    Your analysis MUST be based SOLELY on the 'CLEANED (Status=0) DATA'. Always state this at the end of the analysis as a note
+    Your analysis MUST be based SOLELY on the 'CLEANED (Status=0) DATA'.
 
     Core Principles:
     - **Pattern Analysis:** Use the 'Detailed Statistical Summary' table to analyze key metrics.
@@ -321,14 +319,18 @@ def get_pulse_analysis(ai_data_context: str,
     - **Quantitative Significance:** Refer to the absolute values in the tables.
     - **CRITICAL ENGINEERING FEEDBACK:** De-prioritize current imbalance recommendations if the *absolute* difference between phase currents (in Amps) is minor (e.g., less than 50A), even if the *percentage* seems high.
     
-    Provide a short, informative report in Markdown format with three sections:
-    1.  **PULSE Overview** (2-3 key bullet points)
-    2.  **Key Points** (Use a markdown table and bullet points based on the 'Detailed Statistical Summary')
-    3.  **Recommendations** (Use numbered bullet points, citing standards)
-    """
+    Your response MUST begin *exactly* with the following greeting, followed by a line break:
+    "Hi, I am PULSE (Power Usage Learning and Support Engine)."
+    
+    After the greeting, provide a short, informative report in Markdown format with three sections:
+    1.  **PULSE Executive Summary** (2-3 key bullet points)
+    2.  **Key Observations** (Use a markdown table and bullet points based on the 'Detailed Statistical Summary')
+    3.  **Actionable Recommendations** (Use numbered bullet points, citing standards)
+    
+    Do NOT address the user as "engineer" or "fellow engineer"; just start with the greeting."""
     
     user_prompt = f"""
-
+    Good morning, Please analyze the following power consumption data for an industrial machine at our Suva facility.
     
     **Data Transformation Log (CRITICAL CONTEXT):**
     {transform_log}
@@ -760,9 +762,9 @@ else:
                             "Minimum Power Factor": f"{data['Power Factor'].min():.3f}",
                             "Average Power Factor": f"{avg_pf_val:.3f}" # Use the corrected average
                         }
-                        df_stats = pd.DataFrame(pf_stats_data).T
-                        df_stats.index.name = "Metric"
-                        st.dataframe(df_stats)
+                        # st.json(stats_pf) # OLD LINE
+                        df_stats = pd.DataFrame(list(stats_pf.items()), columns=['Metric', 'Value']) # NEW
+                        st.dataframe(df_stats, hide_index=True) # NEW
 
             with tabs[1]:
                 st.subheader("Measurement Settings")
@@ -986,7 +988,13 @@ else:
                                 }
                             else:
                                 pf_stats_data[col] = {"Average (Operational)": "N/A"}
-                        st.json(pf_stats_data)
+                        # st.json(pf_stats_data) # OLD LINE
+                        
+                        # NEW LINES START
+                        df_stats = pd.DataFrame(pf_stats_data).T # .T transposes rows/cols
+                        df_stats.index.name = "Metric"
+                        st.dataframe(df_stats)
+                        # NEW LINES END
                         # --- END FIX ---
 
 
